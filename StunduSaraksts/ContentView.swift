@@ -3,9 +3,9 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         VStack(spacing: 12) {
-            Text("Mans stundu saraksts")
+            Text("sosats")
                 .font(.title)
-            Text("Pirmais build strādā! 🎉")
+            Text("pirmais liga")
         }
         .padding()
     }
