@@ -7,6 +7,30 @@ final class ScheduleModel: ObservableObject {
     @Published var weeks: [PublishedWeek] = []
     @Published var busy = false
     @Published var error: String?
+    @Published private(set) var displayed: SchoolSchedule?
+    @Published private(set) var currentGroup: SchoolGroup?
+    @Published private(set) var days: [Int: [SchoolLesson]] = [:]
+    @Published private(set) var periods: [String: [LessonPeriod]] = [:]
+
+    // Rebuild on data/group/settings changes only, never when a day button is tapped.
+    func prepare(group: String, shortenedDates: Set<String>) {
+        guard let source = schedule else {
+            displayed = nil; currentGroup = nil; days = [:]; periods = [:]; return
+        }
+        let selected = source.group(matching: group)
+        let own = selected.map { source.lessons(for: $0.id) } ?? []
+        let filtered = SchoolSchedule(week: source.week, groups: source.groups, lessons: own, fetchedAt: source.fetchedAt)
+            .applyingShortenedDates(shortenedDates)
+        var slots: [String: [LessonPeriod]] = [:]
+        for lesson in filtered.lessons {
+            let date = SchoolDate.calendar.date(byAdding: .day, value: lesson.day, to: SchoolDate.monday(source.week.from))!
+            slots[lesson.id] = lesson.periodTimes(on: date, shortened: shortenedDates.contains(BellTimes.dateKey(date)))
+        }
+        currentGroup = selected
+        displayed = filtered
+        days = Dictionary(grouping: filtered.lessons, by: \.day)
+        periods = slots
+    }
     func refresh(week: PublishedWeek? = nil) async {
         guard !busy else { return }
         busy = true; error = nil
@@ -37,18 +61,17 @@ struct ContentView: View {
     @State private var search = ""
     private let blue = Color(red: 0, green: 0.44, blue: 0.9)
     private var surface: Color { Color(.secondarySystemGroupedBackground) }
-    private var selected: SchoolGroup? { schedule?.group(matching: group) }
+    private var selected: SchoolGroup? { model.currentGroup }
     private var shortenedSet: Set<String> { Set(shortenedDates.split(separator: ",").map(String.init)) }
-    private var schedule: SchoolSchedule? { model.schedule?.applyingShortenedDates(shortenedSet) }
+    private var schedule: SchoolSchedule? { model.displayed }
     private var selectedDate: Date {
         let monday = SchoolDate.monday(model.schedule?.week.from ?? Date())
         return SchoolDate.calendar.date(byAdding: .day, value: day, to: monday)!
     }
     private var isShortened: Bool { shortenedSet.contains(BellTimes.dateKey(selectedDate)) }
-    private var lessons: [SchoolLesson] { selected.flatMap { schedule?.lessons(for: $0.id, day: day) } ?? [] }
+    private var lessons: [SchoolLesson] { model.days[day] ?? [] }
     private var fullDate: String {
-        let f = SchoolDate.formatter("d. MMMM"); f.locale = Locale(identifier: "lv_LV")
-        return f.string(from: selectedDate)
+        SchoolDate.full(selectedDate)
     }
     private var dayTitle: String { SchoolDate.dayNames[day] }
 
@@ -110,10 +133,15 @@ struct ContentView: View {
             }
             .refreshable { await model.refresh() }
             .task { await model.refresh() }
+            .onChange(of: model.schedule?.fetchedAt, initial: true) { _, _ in prepareDays() }
+            .onChange(of: group) { _, _ in prepareDays() }
+            .onChange(of: shortenedDates) { _, _ in prepareDays() }
             .sheet(isPresented: $showGroups) { groupPicker }
             .sheet(isPresented: $showSettings) { settings }
         }.tint(blue)
     }
+
+    private func prepareDays() { model.prepare(group: group, shortenedDates: shortenedSet) }
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -191,7 +219,11 @@ struct ContentView: View {
     }
 
     private func lessonCard(_ lesson: SchoolLesson, now: Date) -> some View {
-        let active = lesson.start.map { $0 <= now } == true && lesson.end.map { $0 > now } == true
+        let slots = model.periods[lesson.id] ?? []
+        let active = slots.isEmpty
+            ? (lesson.start.map { $0 <= now } == true && lesson.end.map { $0 > now } == true)
+            : slots.contains { $0.contains(now) }
+        let inBreak = !active && lesson.start.map { $0 <= now } == true && lesson.end.map { $0 > now } == true
         let periodText = lesson.durationPeriods > 1 ? "\(lesson.period)–\(lesson.period + lesson.durationPeriods - 1)" : "\(lesson.period)"
         return HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
@@ -202,11 +234,26 @@ struct ContentView: View {
                 if active { Circle().fill(blue).frame(width: 6, height: 6).padding(.top, 8) }
             }.frame(width: 56, alignment: .leading)
             VStack(alignment: .leading, spacing: 9) {
-                Text(active ? "TAGAD · \(periodText). STUNDA" : "\(periodText). STUNDA")
+                Text(active ? "TAGAD · \(periodText). STUNDA" : (inBreak ? "STARPBRĪDIS" : "\(periodText). STUNDA"))
                     .font(.system(size: 9, weight: .semibold)).tracking(1.2)
                     .foregroundStyle(active ? blue : Color.secondary)
                 Text(lesson.subject).font(.system(size: 18, weight: .semibold)).tracking(-0.3)
                     .fixedSize(horizontal: false, vertical: true)
+                if slots.count > 1 {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
+                            HStack {
+                                Text("\(slot.number). stunda")
+                                Spacer(minLength: 6)
+                                Text(slot.time).monospacedDigit()
+                            }.font(.caption).foregroundStyle(slot.contains(now) ? blue : Color.secondary)
+                            if index + 1 < slots.count, let end = slot.end, let next = slots[index + 1].start, next > end {
+                                Text("Starpbrīdis · \(Int(next.timeIntervalSince(end) / 60)) min")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }.padding(.vertical, 4)
+                }
                 if !lesson.teacher.isEmpty { Text(lesson.teacher).font(.caption).foregroundStyle(.secondary) }
                 HStack(spacing: 8) {
                     if !lesson.room.isEmpty {

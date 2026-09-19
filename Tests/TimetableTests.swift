@@ -85,4 +85,25 @@ final class TimetableTests: XCTestCase {
         XCTAssertEqual(restored.lessons.first?.end, schedule.lessons.first?.end)
     }
 
+    func testDoublePeriodBreakAndBoundaries() throws {
+        let date = SchoolDate.iso("2026-09-18")!
+        let lesson = SchoolLesson(id: "double", groupID: "31", day: 4, period: 2, durationPeriods: 2,
+            subject: "Programmēšana", teacher: "", room: "", subgroup: "",
+            start: SchoolDate.at("09:00", on: date), end: SchoolDate.at("10:25", on: date))
+        let slots = lesson.periodTimes(on: date, shortened: false)
+        XCTAssertEqual(slots.map(\.time), ["09:00–09:40", "09:45–10:25"])
+        XCTAssertTrue(slots[0].contains(SchoolDate.at("09:00", on: date)!))
+        XCTAssertFalse(slots.contains { $0.contains(SchoolDate.at("09:42", on: date)!) })
+        XCTAssertFalse(slots[0].contains(SchoolDate.at("09:40", on: date)!))
+        XCTAssertTrue(slots[1].contains(SchoolDate.at("09:45", on: date)!))
+        XCTAssertEqual(slots[1].start!.timeIntervalSince(slots[0].end!), 300)
+        XCTAssertEqual(lesson.periodTimes(on: date, shortened: true).map(\.time), ["09:00–09:30", "09:40–10:10"])
+    }
+    func testUnrelatedShortenedDateDoesNotChangeSchedule() throws {
+        let schedule = try TimetableParser.schedule(fixture(), week: week)
+        let unchanged = schedule.applyingShortenedDates(["2030-01-01"])
+        XCTAssertEqual(unchanged.lessons.map(\.start), schedule.lessons.map(\.start))
+        XCTAssertEqual(unchanged.lessons.map(\.end), schedule.lessons.map(\.end))
+    }
+
 }
