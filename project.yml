@@ -1,18 +1,24 @@
 name: StunduSaraksts
 options:
   bundleIdPrefix: com.toms
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
 targets:
   StunduSaraksts:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
-    sources: [StunduSaraksts]
+    sources: [StunduSaraksts, Shared]
+    dependencies:
+      - target: StunduWidget
+        embed: true
     info:
       path: StunduSaraksts/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.2"
+        CFBundleVersion: "2"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -22,3 +28,23 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.toms.stundusaraksts
         TARGETED_DEVICE_FAMILY: "1"
+
+  StunduWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources: [StunduWidget, Shared]
+    info:
+      path: StunduWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Stundu Saraksts
+        CFBundleShortVersionString: "0.2"
+        CFBundleVersion: "2"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.toms.stundusaraksts.widget
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES

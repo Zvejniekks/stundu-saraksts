@@ -1,0 +1,8 @@
+.build/
+build/
+Payload/
+*.ipa
+*.xcodeproj/
+StunduSaraksts/Info.plist
+StunduWidget/Info.plist
+.DS_Store
