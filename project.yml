@@ -17,8 +17,8 @@ targets:
       path: StunduSaraksts/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "0.2"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "0.3"
+        CFBundleVersion: "3"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -27,6 +27,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.toms.stundusaraksts
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
 
   StunduWidget:
@@ -38,8 +39,8 @@ targets:
       path: StunduWidget/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "0.2"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "0.3"
+        CFBundleVersion: "3"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
