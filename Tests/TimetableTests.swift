@@ -106,4 +106,32 @@ final class TimetableTests: XCTestCase {
         XCTAssertEqual(unchanged.lessons.map(\.end), schedule.lessons.map(\.end))
     }
 
+    func testWidgetKeepsLastPublicationOnWeekend() throws {
+        let now = SchoolDate.iso("2026-09-19")!
+        XCTAssertEqual(WidgetSelection.week(from: [week], now: now)?.id, "507")
+        let schedule = try TimetableParser.schedule(fixture(), week: week)
+        let rows = WidgetSelection.rows(schedule: schedule, groupID: "-257", now: now)
+        XCTAssertFalse(rows.isEmpty)
+        XCTAssertTrue(rows.allSatisfy { $0.day == rows.first?.day })
+        XCTAssertTrue(rows.allSatisfy { ($0.start ?? now) < now })
+        XCTAssertTrue(WidgetSelection.rows(schedule: schedule, groupID: "missing", now: now).isEmpty)
+    }
+    func testWidgetPrefersCurrentThenNearestFutureWeek() {
+        let future = PublishedWeek(id: "next", title: "next", from: SchoolDate.iso("2026-09-21")!, until: SchoolDate.iso("2026-09-26")!)
+        XCTAssertEqual(WidgetSelection.week(from: [future, week], now: SchoolDate.iso("2026-09-16")!)?.id, week.id)
+        XCTAssertEqual(WidgetSelection.week(from: [week, future], now: SchoolDate.iso("2026-09-19")!)?.id, future.id)
+        XCTAssertNil(WidgetSelection.week(from: [], now: Date()))
+    }
+    func testSplitCardsKeepEachPeriodAndSubject() throws {
+        let schedule = try TimetableParser.schedule(fixture(), week: week)
+        let lesson = try XCTUnwrap(schedule.lessons.first { $0.day == 4 && $0.durationPeriods == 2 })
+        let parts = lesson.splitPeriods(on: SchoolDate.iso("2026-09-18")!, shortened: false)
+        XCTAssertEqual(parts.count, 2)
+        XCTAssertEqual(Set(parts.map(\.id)).count, 2)
+        XCTAssertEqual(parts.map(\.durationPeriods), [1, 1])
+        XCTAssertTrue(parts.allSatisfy { $0.subject == lesson.subject && $0.teacher == lesson.teacher && $0.room == lesson.room })
+        XCTAssertEqual(parts.first?.start, lesson.start)
+        XCTAssertEqual(parts.last?.end, lesson.end)
+    }
+
 }

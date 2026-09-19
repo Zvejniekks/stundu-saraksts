@@ -26,7 +26,11 @@ struct ScheduleProvider: AppIntentTimelineProvider {
         ScheduleEntry(date: Date(), group: "31", schedule: nil, message: "Tavas nākamās stundas")
     }
     func snapshot(for configuration: GroupIntent, in context: Context) async -> ScheduleEntry {
-        ScheduleEntry(date: Date(), group: configuration.group, schedule: ScheduleCache.read()?.applyingShortenedDates(configuration.shortenedDates), message: nil)
+        if let cache = ScheduleCache.read() {
+            return ScheduleEntry(date: Date(), group: configuration.group, schedule: cache.applyingShortenedDates(configuration.shortenedDates), message: nil)
+        }
+        let loaded = await timeline(for: configuration, in: context)
+        return loaded.entries.first ?? placeholder(in: context)
     }
     func timeline(for configuration: GroupIntent, in context: Context) async -> Timeline<ScheduleEntry> {
         let now = Date()
@@ -35,8 +39,8 @@ struct ScheduleProvider: AppIntentTimelineProvider {
         do {
             let client = EduPageClient()
             let weeks = try await client.weeks()
-            // Choose today's publication or the nearest future publication. Old weeks are not reused.
-            if let week = weeks.first(where: { $0.contains(now) }) ?? weeks.filter({ $0.from > now }).min(by: { $0.from < $1.from }) {
+            // Keep the last publication visible until a new one is available.
+            if let week = WidgetSelection.week(from: weeks, now: now) {
                 schedule = try await client.schedule(week: week)
                 if let schedule = schedule { try? ScheduleCache.save(schedule) }
             } else {
@@ -44,7 +48,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             }
         } catch {
             let cache = ScheduleCache.read()
-            if let cache = cache, cache.week.until > now { schedule = cache }
+            schedule = cache
             message = schedule == nil ? "Neizdevās ielādēt. Atver aplikāciju." : "Bezsaistē · saglabātie dati"
         }
         schedule = schedule?.applyingShortenedDates(configuration.shortenedDates)
@@ -65,13 +69,15 @@ struct ScheduleWidgetView: View {
     let entry: ScheduleEntry
     @Environment(\.widgetFamily) private var family
     private var group: SchoolGroup? { entry.schedule?.group(matching: entry.group) }
+    private var archived: Bool { entry.schedule.map { $0.week.until <= entry.date } ?? false }
     private var upcoming: [SchoolLesson] {
-        guard let schedule = entry.schedule, let group = group, schedule.week.until > entry.date else { return [] }
-        return schedule.lessons(for: group.id).filter {
-            if let end = $0.end { return end > entry.date }
-            if let start = $0.start { return start > entry.date }
-            return false
-        }.sorted { ($0.day, $0.period, $0.id) < ($1.day, $1.period, $1.id) }
+        guard let schedule = entry.schedule, let group = group else { return [] }
+        return WidgetSelection.rows(schedule: schedule, groupID: group.id, now: entry.date)
+    }
+    private var publicationLabel: String {
+        guard let week = entry.schedule?.week else { return "" }
+        let dates = "\(SchoolDate.short(week.from))–\(SchoolDate.short(week.until.addingTimeInterval(-1)))"
+        return archived ? "Pēdējais saraksts · \(dates)" : dates
     }
     private var status: String {
         if let message = entry.message, entry.schedule == nil { return message }
@@ -79,18 +85,24 @@ struct ScheduleWidgetView: View {
         return "Nav nākamo stundu. Atver sarakstu."
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(group?.short ?? "\(entry.group). grupa").font(.caption.weight(.semibold))
                 Spacer()
                 Image(systemName: "calendar").foregroundStyle(.blue)
             }
+            if entry.schedule != nil {
+                Text(publicationLabel).font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(archived ? Color.orange : Color.secondary).lineLimit(2)
+            }
             if let first = upcoming.first {
                 Text("\(SchoolDate.dayNames[first.day]) · \(first.time)")
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                Text(first.subject).font(.system(size: 19, weight: .semibold)).tracking(-0.4).lineLimit(family == .systemSmall ? 2 : 1)
-                Text([first.room, first.subgroup].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.caption).lineLimit(1)
+                Text(first.subject).font(.system(size: family == .systemSmall ? 17 : 19, weight: .semibold)).tracking(-0.4).lineLimit(family == .systemSmall ? 2 : 1)
+                if family != .systemSmall {
+                    Text([first.room, first.subgroup].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption).lineLimit(1)
+                }
                 if family != .systemSmall {
                     ForEach(Array(upcoming.dropFirst().prefix(family == .systemLarge ? 4 : 1))) { lesson in
                         HStack(alignment: .top) {
@@ -103,7 +115,10 @@ struct ScheduleWidgetView: View {
                 Text(status).font(.subheadline).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if let message = entry.message, entry.schedule != nil {
+            if archived {
+                Text(entry.message ?? "Jaunais vēl nav publicēts")
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+            } else if let message = entry.message, entry.schedule != nil {
                 Text(message).font(.caption2).foregroundStyle(.orange).lineLimit(1)
             } else if let schedule = entry.schedule {
                 Text("Dati \(SchoolDate.short(schedule.fetchedAt)) \(SchoolDate.time(schedule.fetchedAt))")
