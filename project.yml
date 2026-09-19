@@ -1,1 +1,14 @@
-
+name: StunduSaraksts
+options:
+  bundleIdPrefix: com.toms
+targets:
+  StunduSaraksts:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources: [StunduSaraksts]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.toms.stundusaraksts
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
