@@ -58,9 +58,17 @@ enum SchoolDate {
         f.timeZone = calendar.timeZone; f.dateFormat = format; f.isLenient = false
         return f
     }
-    static func iso(_ string: String) -> Date? { formatter("yyyy-MM-dd").date(from: string) }
-    static func time(_ date: Date) -> String { formatter("HH:mm").string(from: date) }
-    static func short(_ date: Date) -> String { formatter("dd.MM.").string(from: date) }
+    private static let isoFormatter = formatter("yyyy-MM-dd")
+    private static let timeFormatter = formatter("HH:mm")
+    private static let shortFormatter = formatter("dd.MM.")
+    private static let fullFormatter: DateFormatter = {
+        let f = formatter("d. MMMM"); f.locale = Locale(identifier: "lv_LV"); return f
+    }()
+    static func dateKey(_ date: Date) -> String { isoFormatter.string(from: date) }
+    static func full(_ date: Date) -> String { fullFormatter.string(from: date) }
+    static func iso(_ string: String) -> Date? { isoFormatter.date(from: string) }
+    static func time(_ date: Date) -> String { timeFormatter.string(from: date) }
+    static func short(_ date: Date) -> String { shortFormatter.string(from: date) }
     static func day(_ date: Date) -> Int { (calendar.component(.weekday, from: date) + 5) % 7 }
     static func monday(_ date: Date) -> Date {
         calendar.date(byAdding: .day, value: -day(date), to: calendar.startOfDay(for: date))!

@@ -14,14 +14,21 @@ enum BellTimes {
         let pair = rows[period - 1].split(separator: "–").map(String.init)
         return SchoolDate.at(pair[field == "starttime" ? 0 : 1], on: date)
     }
-    static func dateKey(_ date: Date) -> String { SchoolDate.formatter("yyyy-MM-dd").string(from: date) }
+    static func dateKey(_ date: Date) -> String { SchoolDate.dateKey(date) }
 }
 
 extension SchoolSchedule {
     func applyingShortenedDates(_ dates: Set<String>) -> SchoolSchedule {
+        guard !dates.isEmpty else { return self }
+        let monday = SchoolDate.monday(week.from)
+        var changedDays: [Int: Date] = [:]
+        for day in 0..<7 {
+            let date = SchoolDate.calendar.date(byAdding: .day, value: day, to: monday)!
+            if dates.contains(BellTimes.dateKey(date)) { changedDays[day] = date }
+        }
+        guard !changedDays.isEmpty else { return self }
         let adjusted = lessons.map { lesson -> SchoolLesson in
-            let date = SchoolDate.calendar.date(byAdding: .day, value: lesson.day, to: SchoolDate.monday(week.from))!
-            guard dates.contains(BellTimes.dateKey(date)) else { return lesson }
+            guard let date = changedDays[lesson.day] else { return lesson }
             let last = lesson.period + lesson.durationPeriods - 1
             return SchoolLesson(id: lesson.id, groupID: lesson.groupID, day: lesson.day,
                 period: lesson.period, durationPeriods: lesson.durationPeriods, subject: lesson.subject,

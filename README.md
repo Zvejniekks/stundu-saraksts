@@ -1,10 +1,19 @@
-# Stundu Saraksts · 0.3
+# Kas mainīts 0.4
+
+- Dienu pārslēgšanai vairs netiek atkārtoti pārrēķinātas visas skolas stundas. Izvēlētās grupas sarakstu sadala pa dienām vienreiz pēc datu, grupas vai pirmssvētku iestatījumu izmaiņām.
+- Datumu formatētāji tiek izmantoti atkārtoti. Pirmssvētku laiku aprēķins uzreiz beidzas, ja nav izvēlēts attiecīgs datums.
+- Dubultstundas blokā parādās katras stundas sākums un beigas, un starpbrīža ilgums. Stundas aktīvā atzīme neaptver starpbrīdi.
+- Saglabāts iepriekšējais dizains, ikona un pareizie pirmdienas/piektdienas laiki.
+
+Ātruma uzlabojums vēl nav izmērīts uz iPhone. Šeit nav Swift/Xcode; Swift testi un kompilācija jāpalaiž GitHub Actions. Sākotnējā interneta ielāde joprojām ir atkarīga no EduPage servera.
+
+# Stundu Saraksts · 0.4
 
 Atjauninājums esošajai iPhone aplikācijai (iOS 17+). Gaišs, atturīgs dizains ar lielu dienas virsrakstu, datumu pogām un ziliem akcentiem; sistēmas tumšais režīms arī atbalstīts. Pašreizējā stunda ir izcelta.
 
 ## Atjaunināšana no Windows
 
-1. Izpako `StunduSaraksts-v0.3.zip` ar **Extract All / Izvilkt visu**.
+1. Izpako `StunduSaraksts-v0.4.zip` ar **Extract All / Izvilkt visu**.
 2. Atver https://github.com/Zvejniekks/stundu-saraksts/upload/main.
 3. **Ievelc mapes** `StunduSaraksts`, `Shared`, `StunduWidget`, `Tests` no izpakotās mapes tieši GitHub augšupielādes laukumā. Pievieno arī `project.yml`, `Package.swift`, `README.md`. Saglabā mapju struktūru. Īpaši svarīgi: `StunduSaraksts/Assets.xcassets` satur ikonu. Pats ZIP nav jāaugšupielādē.
 4. **Commit changes**. Failā `.github/workflows/build.yml` vari ielikt ZIP esošo versiju, lai Actions pirms kompilēšanas palaistu Swift testus.
