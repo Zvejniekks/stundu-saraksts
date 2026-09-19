@@ -10,25 +10,37 @@ final class ScheduleModel: ObservableObject {
     @Published private(set) var displayed: SchoolSchedule?
     @Published private(set) var currentGroup: SchoolGroup?
     @Published private(set) var days: [Int: [SchoolLesson]] = [:]
+    @Published private(set) var breakBefore: [String: Int] = [:]
     @Published private(set) var periods: [String: [LessonPeriod]] = [:]
 
     // Rebuild on data/group/settings changes only, never when a day button is tapped.
     func prepare(group: String, shortenedDates: Set<String>) {
         guard let source = schedule else {
-            displayed = nil; currentGroup = nil; days = [:]; periods = [:]; return
+            displayed = nil; currentGroup = nil; days = [:]; periods = [:]; breakBefore = [:]; return
         }
         let selected = source.group(matching: group)
         let own = selected.map { source.lessons(for: $0.id) } ?? []
         let filtered = SchoolSchedule(week: source.week, groups: source.groups, lessons: own, fetchedAt: source.fetchedAt)
             .applyingShortenedDates(shortenedDates)
         var slots: [String: [LessonPeriod]] = [:]
+        var cards: [SchoolLesson] = []
+        var breaks: [String: Int] = [:]
         for lesson in filtered.lessons {
             let date = SchoolDate.calendar.date(byAdding: .day, value: lesson.day, to: SchoolDate.monday(source.week.from))!
-            slots[lesson.id] = lesson.periodTimes(on: date, shortened: shortenedDates.contains(BellTimes.dateKey(date)))
+            let shortened = shortenedDates.contains(BellTimes.dateKey(date))
+            let parts = lesson.splitPeriods(on: date, shortened: shortened)
+            for (index, part) in parts.enumerated() {
+                cards.append(part)
+                slots[part.id] = part.periodTimes(on: date, shortened: shortened)
+                if index > 0, let end = parts[index - 1].end, let start = part.start, start > end {
+                    breaks[part.id] = Int(start.timeIntervalSince(end) / 60)
+                }
+            }
         }
         currentGroup = selected
         displayed = filtered
-        days = Dictionary(grouping: filtered.lessons, by: \.day)
+        days = Dictionary(grouping: cards.sorted { ($0.day, $0.period, $0.id) < ($1.day, $1.period, $1.id) }, by: \.day)
+        breakBefore = breaks
         periods = slots
     }
     func refresh(week: PublishedWeek? = nil) async {
@@ -97,7 +109,16 @@ struct ContentView: View {
                             daySummary
                             TimelineView(.periodic(from: .now, by: 60)) { context in
                                 LazyVStack(spacing: 12) {
-                                    ForEach(lessons) { lesson in lessonCard(lesson, now: context.date) }
+                                    ForEach(lessons) { lesson in
+                                        if let minutes = model.breakBefore[lesson.id] {
+                                            HStack(spacing: 10) {
+                                                Rectangle().fill(Color.secondary.opacity(0.15)).frame(height: 1)
+                                                Text("\(minutes) min starpbrīdis").font(.caption2).foregroundStyle(.secondary).fixedSize()
+                                                Rectangle().fill(Color.secondary.opacity(0.15)).frame(height: 1)
+                                            }.padding(.horizontal, 24).padding(.vertical, 2)
+                                        }
+                                        lessonCard(lesson, now: context.date)
+                                    }
                                 }
                             }
                         }
@@ -239,21 +260,6 @@ struct ContentView: View {
                     .foregroundStyle(active ? blue : Color.secondary)
                 Text(lesson.subject).font(.system(size: 18, weight: .semibold)).tracking(-0.3)
                     .fixedSize(horizontal: false, vertical: true)
-                if slots.count > 1 {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
-                            HStack {
-                                Text("\(slot.number). stunda")
-                                Spacer(minLength: 6)
-                                Text(slot.time).monospacedDigit()
-                            }.font(.caption).foregroundStyle(slot.contains(now) ? blue : Color.secondary)
-                            if index + 1 < slots.count, let end = slot.end, let next = slots[index + 1].start, next > end {
-                                Text("Starpbrīdis · \(Int(next.timeIntervalSince(end) / 60)) min")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                        }
-                    }.padding(.vertical, 4)
-                }
                 if !lesson.teacher.isEmpty { Text(lesson.teacher).font(.caption).foregroundStyle(.secondary) }
                 HStack(spacing: 8) {
                     if !lesson.room.isEmpty {

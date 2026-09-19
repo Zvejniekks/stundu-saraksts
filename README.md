@@ -1,3 +1,15 @@
+# Atjauninājums 0.5
+
+- Logrīks izvēlas aktuālo nedēļu, tad tuvāko nākotnes nedēļu, bet, ja tādas nav, pēdējo publicēto nedēļu. Vecajam sarakstam rāda datumu un atzīmi “Pēdējais saraksts”.
+- Vecās nedēļas pārskatā rāda pirmo dienu ar stundām; datumi netiek pārcelti uz nākamo nedēļu. Vienā logrīkā netiek sajauktas vairāku dienu stundas.
+- Bez interneta tiek izmantots pēdējais saglabātais saraksts, arī ja tas ir vecāks. Ja nav ne datu, ne interneta, paliek paskaidrojums.
+- Dubultstundas aplikācijā sadalītas atsevišķās kartītēs. Katrā laiks tikai kreisajā malā, priekšmets un kabinets. Pa vidu kompakts starpbrīža uzraksts.
+- Saglabāti 0.4 ātrdarbības uzlabojumi. Sarkanā laika līnija vēl nav pievienota.
+
+Izpako `StunduSaraksts-v0.5.zip`, augšupielādē četras mapes un `project.yml` kā iepriekš. Atjaunini arī `.github/workflows/build.yml` no ZIP, lai būvējumā darbotos Swift testi. Kompilēšana un izvietojums īstā iPhone šajā vidē nav pārbaudīts.
+
+Ja “Stundu Saraksts” vispār neparādās iPhone logrīku izvēlnē, tas ir atsevišķs paplašinājuma instalācijas jautājums; jaunās nedēļas trūkums nepaslēpj pašu logrīku no iPhone saraksta. AltStore instalācijā saglabā App Extensions un pēc instalēšanas atver aplikāciju.
+
 # Kas mainīts 0.4
 
 - Dienu pārslēgšanai vairs netiek atkārtoti pārrēķinātas visas skolas stundas. Izvēlētās grupas sarakstu sadala pa dienām vienreiz pēc datu, grupas vai pirmssvētku iestatījumu izmaiņām.

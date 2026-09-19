@@ -24,3 +24,14 @@ extension SchoolLesson {
         }
     }
 }
+
+extension SchoolLesson {
+    func splitPeriods(on date: Date, shortened: Bool) -> [SchoolLesson] {
+        guard durationPeriods > 1 else { return [self] }
+        return periodTimes(on: date, shortened: shortened).map { slot in
+            SchoolLesson(id: "\(id)::\(slot.number)", groupID: groupID, day: day,
+                period: slot.number, durationPeriods: 1, subject: subject,
+                teacher: teacher, room: room, subgroup: subgroup, start: slot.start, end: slot.end)
+        }
+    }
+}
