@@ -19,6 +19,7 @@ struct SchoolLesson: Codable, Identifiable {
     let groupID: String
     let day: Int
     let period: Int
+    let durationPeriods: Int
     let subject: String
     let teacher: String
     let room: String
@@ -138,6 +139,10 @@ enum TimetableParser {
         }
         func time(_ period: Row?, field: String, day: Int, date: Date) -> Date? {
             guard let period = period else { return nil }
+            if let number = Int(string(period["period"])),
+               let official = BellTimes.time(period: number, field: field, day: day, date: date) {
+                return official
+            }
             let overrides = period["daydata"] as? [String: Row]
             let text = string(overrides?[String(day)]?[field] ?? period[field])
             return SchoolDate.at(text, on: date)
@@ -162,7 +167,7 @@ enum TimetableParser {
                         .filter { string($0["classid"]) == groupID && $0["entireclass"] as? Bool != true }
                         .map { string($0["name"]) }.joined(separator: ", ")
                     lessons.append(SchoolLesson(id: "\(card["id"] ?? "")-\(groupID)-\(day)", groupID: groupID,
-                        day: day, period: period, subject: names([string(lesson["subjectid"])], in: subjects),
+                        day: day, period: period, durationPeriods: duration, subject: names([string(lesson["subjectid"])], in: subjects),
                         teacher: names(lesson["teacherids"], in: teachers), room: names(card["classroomids"], in: rooms),
                         subgroup: subgroup, start: start, end: end))
                 }
@@ -225,7 +230,7 @@ final class EduPageClient {
 enum ScheduleCache {
     // Each process has its own cache; no App Groups entitlement needed for sideloading.
     private static var url: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("schedule-v1.json")
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("schedule-v2.json")
     }
     static func read() -> SchoolSchedule? {
         guard let bytes = try? Data(contentsOf: url) else { return nil }
