@@ -7,8 +7,18 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources: [StunduSaraksts]
+    info:
+      path: StunduSaraksts/Info.plist
+      properties:
+        CFBundleDisplayName: Stundu Saraksts
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.toms.stundusaraksts
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1"
