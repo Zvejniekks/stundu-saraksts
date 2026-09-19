@@ -6,6 +6,12 @@ struct GroupIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "Stundu saraksts"
     static var description = IntentDescription("Izvēlies grupu, piemēram, 31. Logrīka grupa tiek saglabāta atsevišķi no aplikācijas.")
     @Parameter(title: "Grupas numurs", default: "31") var group: String
+    @Parameter(title: "Pirmssvētku datums (GGGG-MM-DD)", default: "") var shortenedDate: String
+    var shortenedDates: Set<String> {
+        let value = shortenedDate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let date = SchoolDate.iso(value), BellTimes.dateKey(date) == value else { return [] }
+        return [value]
+    }
 }
 
 struct ScheduleEntry: TimelineEntry {
@@ -20,7 +26,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
         ScheduleEntry(date: Date(), group: "31", schedule: nil, message: "Tavas nākamās stundas")
     }
     func snapshot(for configuration: GroupIntent, in context: Context) async -> ScheduleEntry {
-        ScheduleEntry(date: Date(), group: configuration.group, schedule: ScheduleCache.read(), message: nil)
+        ScheduleEntry(date: Date(), group: configuration.group, schedule: ScheduleCache.read()?.applyingShortenedDates(configuration.shortenedDates), message: nil)
     }
     func timeline(for configuration: GroupIntent, in context: Context) async -> Timeline<ScheduleEntry> {
         let now = Date()
@@ -41,6 +47,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             if let cache = cache, cache.week.until > now { schedule = cache }
             message = schedule == nil ? "Neizdevās ielādēt. Atver aplikāciju." : "Bezsaistē · saglabātie dati"
         }
+        schedule = schedule?.applyingShortenedDates(configuration.shortenedDates)
         var dates = [now]
         if let schedule = schedule, let group = schedule.group(matching: configuration.group) {
             let horizon = now.addingTimeInterval(6 * 3600)
@@ -74,20 +81,20 @@ struct ScheduleWidgetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(group?.short ?? "\(entry.group). grupa").font(.caption.bold())
+                Text(group?.short ?? "\(entry.group). grupa").font(.caption.weight(.semibold))
                 Spacer()
-                Image(systemName: "calendar").foregroundStyle(.indigo)
+                Image(systemName: "calendar").foregroundStyle(.blue)
             }
             if let first = upcoming.first {
                 Text("\(SchoolDate.dayNames[first.day]) · \(first.time)")
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                Text(first.subject).font(.headline).lineLimit(family == .systemSmall ? 2 : 1)
+                Text(first.subject).font(.system(size: 19, weight: .semibold)).tracking(-0.4).lineLimit(family == .systemSmall ? 2 : 1)
                 Text([first.room, first.subgroup].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).lineLimit(1)
                 if family != .systemSmall {
                     ForEach(Array(upcoming.dropFirst().prefix(family == .systemLarge ? 4 : 1))) { lesson in
                         HStack(alignment: .top) {
-                            Text(lesson.start.map(SchoolDate.time) ?? "?").monospacedDigit()
+                            Text(lesson.start.map(SchoolDate.time) ?? "?").monospacedDigit().foregroundStyle(.blue)
                             Text(lesson.subject).lineLimit(1)
                         }.font(.caption)
                     }

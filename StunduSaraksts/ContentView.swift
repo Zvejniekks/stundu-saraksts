@@ -30,143 +30,257 @@ final class ScheduleModel: ObservableObject {
 struct ContentView: View {
     @StateObject private var model = ScheduleModel()
     @AppStorage("selectedGroup") private var group = "31"
+    @AppStorage("shortenedDates") private var shortenedDates = ""
     @State private var day = min(SchoolDate.day(Date()), 4)
     @State private var showGroups = false
+    @State private var showSettings = false
     @State private var search = ""
-    private var selected: SchoolGroup? { model.schedule?.group(matching: group) }
-    private let accent = Color(red: 0.44, green: 0.39, blue: 0.94)
+    private let blue = Color(red: 0, green: 0.44, blue: 0.9)
+    private var surface: Color { Color(.secondarySystemGroupedBackground) }
+    private var selected: SchoolGroup? { schedule?.group(matching: group) }
+    private var shortenedSet: Set<String> { Set(shortenedDates.split(separator: ",").map(String.init)) }
+    private var schedule: SchoolSchedule? { model.schedule?.applyingShortenedDates(shortenedSet) }
+    private var selectedDate: Date {
+        let monday = SchoolDate.monday(model.schedule?.week.from ?? Date())
+        return SchoolDate.calendar.date(byAdding: .day, value: day, to: monday)!
+    }
+    private var isShortened: Bool { shortenedSet.contains(BellTimes.dateKey(selectedDate)) }
+    private var lessons: [SchoolLesson] { selected.flatMap { schedule?.lessons(for: $0.id, day: day) } ?? [] }
+    private var fullDate: String {
+        let f = SchoolDate.formatter("d. MMMM"); f.locale = Locale(identifier: "lv_LV")
+        return f.string(from: selectedDate)
+    }
+    private var dayTitle: String { SchoolDate.dayNames[day] }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header
+                VStack(alignment: .leading, spacing: 28) {
+                    hero
                     if let error = model.error {
                         Label(error, systemImage: "wifi.exclamationmark")
-                            .font(.footnote).foregroundStyle(.orange)
+                            .font(.footnote).foregroundStyle(.orange).padding(16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(surface, in: RoundedRectangle(cornerRadius: 20))
                     }
-                    if let schedule = model.schedule {
-                        weekMenu(schedule)
+                    if let schedule = schedule {
+                        weekPicker(schedule)
                         dayPicker
-                        let lessons = selected.map { schedule.lessons(for: $0.id, day: day) } ?? []
                         if selected == nil {
-                            ContentUnavailableView("Izvēlies grupu", systemImage: "person.2", description: Text("Saglabātā grupa šajā sarakstā nav atrasta."))
+                            ContentUnavailableView("Izvēlies grupu", systemImage: "person.2", description: Text("Šajā nedēļā saglabātā grupa nav atrasta."))
                         } else if lessons.isEmpty {
-                            ContentUnavailableView("Nav stundu", systemImage: "sun.max", description: Text("Šai dienai izvēlētajā sarakstā nav stundu."))
+                            ContentUnavailableView("Brīva diena.", systemImage: "sun.max", description: Text("Šajā sarakstā šai dienai nav stundu."))
                         } else {
-                            LazyVStack(spacing: 12) {
-                                ForEach(lessons) { lesson in lessonCard(lesson) }
+                            daySummary
+                            TimelineView(.periodic(from: .now, by: 60)) { context in
+                                LazyVStack(spacing: 12) {
+                                    ForEach(lessons) { lesson in lessonCard(lesson, now: context.date) }
+                                }
                             }
                         }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Ielādēts \(SchoolDate.short(schedule.fetchedAt)) \(SchoolDate.time(schedule.fetchedAt))")
-                            Text("Visi laiki pēc Latvijas laika. Apakšgrupas ir norādītas pie stundām.")
-                            Text("Logrīks: turi nospiestu sākuma ekrānu → pievieno “Stundu Saraksts”. Grupu vari mainīt logrīka iestatījumos.")
-                            Link("Atvērt skolas sarakstu", destination: URL(string: "https://valteh.edupage.org/timetable/view.php")!)
-                        }.font(.caption).foregroundStyle(.secondary)
-                    } else if model.busy {
-                        ProgressView("Ielādē stundu sarakstu…").frame(maxWidth: .infinity).padding(40)
+                        footer(schedule)
                     } else {
-                        ContentUnavailableView("Saraksts vēl nav ielādēts", systemImage: "calendar", description: Text("Pārbaudi internetu un nospied atjaunošanas pogu."))
+                        if model.busy {
+                            ProgressView("Ielādē sarakstu…").frame(maxWidth: .infinity).padding(.vertical, 48)
+                        } else {
+                            ContentUnavailableView("Saraksts vēl nav ielādēts", systemImage: "calendar", description: Text("Pārbaudi internetu un atjauno sarakstu."))
+                        }
                     }
-                }.padding(20)
+                }.padding(.horizontal, 22).padding(.top, 28).padding(.bottom, 36)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Mans saraksts")
+            .navigationTitle("Stundas")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showGroups = true } label: {
+                        HStack(spacing: 5) {
+                            Text(selected?.short ?? "\(group). grupa").font(.subheadline.weight(.semibold))
+                            Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                        }
+                    }.disabled(model.schedule == nil).accessibilityLabel("Mainīt grupu")
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { Task { await model.refresh() } } label: {
                         if model.busy { ProgressView() } else { Image(systemName: "arrow.clockwise") }
                     }.disabled(model.busy).accessibilityLabel("Atjaunot sarakstu")
+                    Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                        .accessibilityLabel("Dienas iestatījumi")
                 }
             }
             .refreshable { await model.refresh() }
             .task { await model.refresh() }
             .sheet(isPresented: $showGroups) { groupPicker }
-        }.tint(accent)
+            .sheet(isPresented: $showSettings) { settings }
+        }.tint(blue)
     }
-    private var header: some View {
-        Button { showGroups = true } label: {
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("VALMIERAS TEHNIKUMS")
+                .font(.system(size: 10, weight: .semibold)).tracking(2.2).foregroundStyle(.secondary)
+            Text(dayTitle + ".")
+                .font(.system(size: 43, weight: .bold, design: .default)).tracking(-1.8)
+                .lineLimit(1).minimumScaleFactor(0.65)
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 8) {
+                Text(fullDate).foregroundStyle(.secondary)
+                if SchoolDate.calendar.isDate(selectedDate, inSameDayAs: Date()) {
+                    Text("Šodien").foregroundStyle(blue)
+                }
+            }.font(.title3)
+        }.padding(.top, 4)
+    }
+
+    private func weekPicker(_ schedule: SchoolSchedule) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("VALMIERAS TEHNIKUMS").font(.caption2.weight(.bold)).tracking(2)
-                    Text(selected?.short ?? "\(group). grupa").font(.largeTitle.bold())
-                    Text("Saglabāta grupa · pieskaries, lai mainītu").font(.caption)
-                }
+                Text("Tava nedēļa").font(.subheadline.weight(.semibold))
                 Spacer()
-                Image(systemName: "pin.fill").font(.title2)
-            }.foregroundStyle(.white).padding(22)
-                .background(LinearGradient(colors: [accent, accent.opacity(0.7)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 24))
-        }.buttonStyle(.plain)
-    }
-    private func weekMenu(_ schedule: SchoolSchedule) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Menu {
-                ForEach(model.weeks) { week in
-                    Button(week.title) { Task { await model.refresh(week: week) } }
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "calendar")
-                    Text("\(SchoolDate.short(schedule.week.from))–\(SchoolDate.short(schedule.week.until.addingTimeInterval(-1)))").bold()
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                }
-            }.disabled(model.busy || model.weeks.isEmpty)
+                Menu {
+                    ForEach(model.weeks) { week in
+                        Button(week.title) { Task { await model.refresh(week: week) } }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("\(SchoolDate.short(schedule.week.from))–\(SchoolDate.short(schedule.week.until.addingTimeInterval(-1)))")
+                        Image(systemName: "chevron.down").font(.caption2)
+                    }.font(.subheadline)
+                }.disabled(model.busy || model.weeks.isEmpty)
+            }
             if !schedule.week.contains(Date()) {
-                Text("Skaties citu nedēļu. Tās stundas nav šodienas saraksts.")
+                Text("Apskati publicēto nedēļu. Šis nav šodienas saraksts.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
+
     private var dayPicker: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             ForEach(0..<5) { index in
-                Button { day = index } label: {
-                    Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index])
-                        .font(.subheadline.bold()).frame(maxWidth: .infinity).padding(.vertical, 13)
-                        .background(day == index ? accent : Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
-                        .foregroundStyle(day == index ? Color.white : Color.primary)
-                }.accessibilityLabel(SchoolDate.dayNames[index])
+                let date = SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
+                Button { withAnimation(.easeInOut(duration: 0.18)) { day = index } } label: {
+                    VStack(spacing: 10) {
+                        Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index]).font(.caption.weight(.medium))
+                        Text("\(SchoolDate.calendar.component(.day, from: date))").font(.title3.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 15)
+                    .background(day == index ? Color.primary : surface, in: RoundedRectangle(cornerRadius: 22))
+                    .foregroundStyle(day == index ? Color(.systemBackground) : Color.primary)
+                }.buttonStyle(.plain).accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.short(date))")
+                    .accessibilityAddTraits(day == index ? .isSelected : [])
             }
         }
     }
-    private func lessonCard(_ lesson: SchoolLesson) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Text("\(lesson.period)").font(.title3.bold()).foregroundStyle(accent)
-                .frame(width: 34, height: 36).background(accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 7) {
-                Text(lesson.subject).font(.headline)
-                Text(lesson.time).font(.subheadline.monospacedDigit()).foregroundStyle(accent)
-                if !lesson.teacher.isEmpty { Text(lesson.teacher).font(.subheadline).foregroundStyle(.secondary) }
-                if !lesson.room.isEmpty { Label(lesson.room, systemImage: "door.left.hand.open").font(.caption) }
-                if !lesson.subgroup.isEmpty { Text("Apakšgrupa: \(lesson.subgroup)").font(.caption).foregroundStyle(.secondary) }
-                if lesson.start == nil || lesson.end == nil {
-                    Text("Laiks avotā nav precīzs — pārbaudi EduPage.").font(.caption).foregroundStyle(.orange)
+
+    private var daySummary: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Dienas plāns").font(.title2.bold()).tracking(-0.6)
+                Text(isShortened ? "Pirmssvētku dienas laiki" : (day == 4 ? "Piektdienas laiki" : (day == 0 ? "Pirmdienas laiki" : "Parastie stundu laiki")))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if let end = lessons.compactMap(\.end).max() {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(SchoolDate.time(end)).font(.title3.weight(.semibold)).monospacedDigit()
+                    Text("dienas beigas").font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            Spacer(minLength: 0)
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+        }
     }
+
+    private func lessonCard(_ lesson: SchoolLesson, now: Date) -> some View {
+        let active = lesson.start.map { $0 <= now } == true && lesson.end.map { $0 > now } == true
+        let periodText = lesson.durationPeriods > 1 ? "\(lesson.period)–\(lesson.period + lesson.durationPeriods - 1)" : "\(lesson.period)"
+        return HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(lesson.start.map(SchoolDate.time) ?? "—")
+                    .font(.system(size: 18, weight: .semibold)).monospacedDigit()
+                Text(lesson.end.map(SchoolDate.time) ?? "—")
+                    .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                if active { Circle().fill(blue).frame(width: 6, height: 6).padding(.top, 8) }
+            }.frame(width: 56, alignment: .leading)
+            VStack(alignment: .leading, spacing: 9) {
+                Text(active ? "TAGAD · \(periodText). STUNDA" : "\(periodText). STUNDA")
+                    .font(.system(size: 9, weight: .semibold)).tracking(1.2)
+                    .foregroundStyle(active ? blue : Color.secondary)
+                Text(lesson.subject).font(.system(size: 18, weight: .semibold)).tracking(-0.3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !lesson.teacher.isEmpty { Text(lesson.teacher).font(.caption).foregroundStyle(.secondary) }
+                HStack(spacing: 8) {
+                    if !lesson.room.isEmpty {
+                        Label(lesson.room, systemImage: "door.left.hand.open")
+                            .font(.caption.weight(.medium)).foregroundStyle(blue)
+                    }
+                    if !lesson.subgroup.isEmpty {
+                        Text(lesson.subgroup).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if lesson.start == nil || lesson.end == nil {
+                    Text("Precizē laiku skolas sarakstā.").font(.caption).foregroundStyle(.orange)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(20)
+        .background(surface, in: RoundedRectangle(cornerRadius: 24))
+        .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(active ? blue.opacity(0.5) : Color.clear, lineWidth: 1))
+    }
+
+    private func footer(_ schedule: SchoolSchedule) -> some View {
+        VStack(spacing: 8) {
+            Text("Atjaunots \(SchoolDate.short(schedule.fetchedAt)) plkst. \(SchoolDate.time(schedule.fetchedAt))")
+                .font(.caption2).foregroundStyle(.secondary)
+            Link("Skatīt EduPage ↗", destination: URL(string: "https://valteh.edupage.org/timetable/view.php")!)
+                .font(.caption)
+        }.frame(maxWidth: .infinity).padding(.top, 8)
+    }
+
     private var groupPicker: some View {
         NavigationStack {
             List {
                 ForEach((model.schedule?.groups ?? []).filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { item in
-                    Button {
-                        group = item.short; showGroups = false
-                    } label: {
+                    Button { group = item.short; showGroups = false } label: {
                         HStack {
                             Text(item.name).foregroundStyle(.primary)
                             Spacer()
                             if selected?.id == item.id { Image(systemName: "checkmark.circle.fill") }
-                        }
+                        }.padding(.vertical, 6)
                     }
                 }
             }
             .searchable(text: $search, prompt: "Grupas numurs")
-            .navigationTitle("Izvēlies grupu")
+            .navigationTitle("Tava grupa")
             .toolbar { Button("Gatavs") { showGroups = false } }
-        }
+        }.tint(blue)
+    }
+
+    private var settings: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle("Pirmssvētku diena", isOn: Binding(get: { isShortened }, set: { enabled in
+                        var dates = shortenedSet
+                        let key = BellTimes.dateKey(selectedDate)
+                        if enabled { dates.insert(key) } else { dates.remove(key) }
+                        shortenedDates = dates.sorted().joined(separator: ",")
+                    }))
+                } header: { Text("\(dayTitle), \(fullDate)") } footer: {
+                    Text("Saīsinātie laiki attiecas tikai uz izvēlēto datumu. Ieslēdz, ja skola šai dienai ir noteikusi pirmssvētku sarakstu.")
+                }
+                Section("Sākuma ekrāna logrīks") {
+                    Text("Turi nospiestu sākuma ekrānu un pievieno “Stundu Saraksts”. Grupu izvēlies logrīka iestatījumos.")
+                    Text("Ja izmanto pirmssvētku laikus, arī logrīka iestatījumos norādi datumu formātā GGGG-MM-DD. Aplikācijas izvēle uz logrīku automātiski nepāriet.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Stundu laiki") {
+                    Text("Pirmdienām, otrdienām–ceturtdienām un piektdienām ir atsevišķi laiki pēc skolas tabulas. Visi laiki ir pēc Latvijas laika.")
+                    Link("Skolas laiku tabula ↗", destination: URL(string: "https://valmierastehnikums.lv/wp-content/uploads/2024/10/MACIBU_STUNDU_LAIKI.pdf-2.pdf")!)
+                }
+            }
+            .navigationTitle("Iestatījumi")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("Gatavs") { showSettings = false } }
+        }.tint(blue)
     }
 }

@@ -19,11 +19,11 @@ final class TimetableTests: XCTestCase {
         XCTAssertEqual(schedule.lessons(for: "-257", day: 1).count, 3)
         XCTAssertNil(schedule.group(matching: "9999"))
     }
-    func testSourceTimesAreNotInvented() throws {
+    func testSchoolTableReplacesBrokenSourceTimes() throws {
         let schedule = try TimetableParser.schedule(fixture(), week: week)
         XCTAssertNil(SchoolDate.at("50:50", on: week.from))
         XCTAssertNil(SchoolDate.at("09:99", on: week.from))
-        XCTAssertTrue(schedule.lessons.contains { $0.start != nil && $0.end == nil })
+        XCTAssertTrue(schedule.lessons.allSatisfy { $0.start != nil && $0.end != nil })
         for lesson in schedule.lessons where lesson.day == 1 {
             XCTAssertNotNil(lesson.start)
             XCTAssertNotNil(lesson.end)
@@ -51,4 +51,38 @@ final class TimetableTests: XCTestCase {
         XCTAssertThrowsError(try TimetableParser.schedule([:], week: week))
         XCTAssertThrowsError(try TimetableParser.weeks([:]))
     }
+    func testFridayAndMondayTimes() throws {
+        let friday = SchoolDate.iso("2026-09-18")!
+        XCTAssertEqual(SchoolDate.time(BellTimes.time(period: 2, field: "starttime", day: 4, date: friday)!), "09:00")
+        XCTAssertEqual(SchoolDate.time(BellTimes.time(period: 2, field: "endtime", day: 4, date: friday)!), "09:40")
+        XCTAssertEqual(SchoolDate.time(BellTimes.time(period: 6, field: "starttime", day: 4, date: friday)!), "12:00")
+        XCTAssertEqual(SchoolDate.time(BellTimes.time(period: 10, field: "endtime", day: 4, date: friday)!), "15:40")
+        XCTAssertEqual(SchoolDate.time(BellTimes.time(period: 6, field: "starttime", day: 0, date: week.from)!), "12:40")
+        XCTAssertEqual(SchoolDate.time(BellTimes.time(period: 2, field: "endtime", day: 0, date: week.from)!), "10:00")
+    }
+    func testDoubleLessonUsesLastPeriodEnd() throws {
+        let schedule = try TimetableParser.schedule(fixture(), week: week)
+        let lesson = try XCTUnwrap(schedule.lessons.first { $0.durationPeriods == 2 && $0.day == 4 })
+        let date = SchoolDate.iso("2026-09-18")!
+        XCTAssertEqual(lesson.end, BellTimes.time(period: lesson.period + 1, field: "endtime", day: 4, date: date))
+    }
+    func testShortenedTimesApplyOnlyToChosenDate() throws {
+        let schedule = try TimetableParser.schedule(fixture(), week: week)
+        let adjusted = schedule.applyingShortenedDates(["2026-09-18"])
+        for original in schedule.lessons {
+            let changed = try XCTUnwrap(adjusted.lessons.first { $0.id == original.id })
+            if original.day != 4 {
+                XCTAssertEqual(changed.start, original.start)
+                XCTAssertEqual(changed.end, original.end)
+            } else {
+                let date = SchoolDate.iso("2026-09-18")!
+                XCTAssertEqual(changed.start, BellTimes.time(period: original.period, field: "starttime", day: 4, date: date, shortened: true))
+                XCTAssertEqual(changed.end, BellTimes.time(period: original.period + original.durationPeriods - 1, field: "endtime", day: 4, date: date, shortened: true))
+            }
+        }
+        // Removing the override returns to the authoritative ordinary weekday table.
+        let restored = schedule.applyingShortenedDates([])
+        XCTAssertEqual(restored.lessons.first?.end, schedule.lessons.first?.end)
+    }
+
 }
