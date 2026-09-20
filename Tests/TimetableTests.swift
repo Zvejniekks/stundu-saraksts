@@ -134,4 +134,31 @@ final class TimetableTests: XCTestCase {
         XCTAssertEqual(parts.last?.end, lesson.end)
     }
 
+    func testWidgetDayIncludesPastLessons() throws {
+        let source = try TimetableParser.schedule(fixture(), week: week)
+        let prepared = WidgetSelection.prepare(source, group: "31", shortenedDates: [])
+        let now = SchoolDate.at("13:00", on: SchoolDate.iso("2026-09-18")!)!
+        let rows = WidgetSelection.rows(schedule: prepared, groupID: "-257", now: now)
+        XCTAssertEqual(rows.count, prepared.lessons(for: "-257", day: 4).count)
+        XCTAssertTrue(rows.contains { ($0.end ?? .distantFuture) < now })
+        XCTAssertTrue(rows.allSatisfy { $0.day == 4 && $0.durationPeriods == 1 })
+    }
+    func testSmallWidgetSkipsCurrentLesson() throws {
+        let source = try TimetableParser.schedule(fixture(), week: week)
+        let prepared = WidgetSelection.prepare(source, group: "31", shortenedDates: [])
+        let first = try XCTUnwrap(prepared.lessons(for: "-257").first)
+        let now = try XCTUnwrap(first.start).addingTimeInterval(60)
+        let next = try XCTUnwrap(WidgetSelection.next(schedule: prepared, groupID: "-257", now: now))
+        XCTAssertGreaterThan(try XCTUnwrap(next.start), now)
+        XCTAssertNotEqual(next.id, first.id)
+    }
+    func testWidgetPreparationPreservesWholeWeek() throws {
+        let source = try TimetableParser.schedule(fixture(), week: week)
+        let expected = source.lessons(for: "-257").reduce(0) { $0 + $1.durationPeriods }
+        let prepared = WidgetSelection.prepare(source, group: "31", shortenedDates: [])
+        XCTAssertEqual(prepared.lessons.count, expected)
+        XCTAssertEqual(Set(prepared.lessons.map(\.day)), Set(0..<5))
+        XCTAssertEqual(Set(prepared.lessons.map(\.id)).count, expected)
+    }
+
 }

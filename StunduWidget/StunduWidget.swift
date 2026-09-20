@@ -27,7 +27,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
     }
     func snapshot(for configuration: GroupIntent, in context: Context) async -> ScheduleEntry {
         if let cache = ScheduleCache.read() {
-            return ScheduleEntry(date: Date(), group: configuration.group, schedule: cache.applyingShortenedDates(configuration.shortenedDates), message: nil)
+            return ScheduleEntry(date: Date(), group: configuration.group, schedule: WidgetSelection.prepare(cache, group: configuration.group, shortenedDates: configuration.shortenedDates), message: nil)
         }
         let loaded = await timeline(for: configuration, in: context)
         return loaded.entries.first ?? placeholder(in: context)
@@ -51,7 +51,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             schedule = cache
             message = schedule == nil ? "Neizdevās ielādēt. Atver aplikāciju." : "Bezsaistē · saglabātie dati"
         }
-        schedule = schedule?.applyingShortenedDates(configuration.shortenedDates)
+        schedule = schedule.map { WidgetSelection.prepare($0, group: configuration.group, shortenedDates: configuration.shortenedDates) }
         var dates = [now]
         if let schedule = schedule, let group = schedule.group(matching: configuration.group) {
             let horizon = now.addingTimeInterval(6 * 3600)
@@ -70,61 +70,157 @@ struct ScheduleWidgetView: View {
     @Environment(\.widgetFamily) private var family
     private var group: SchoolGroup? { entry.schedule?.group(matching: entry.group) }
     private var archived: Bool { entry.schedule.map { $0.week.until <= entry.date } ?? false }
-    private var upcoming: [SchoolLesson] {
-        guard let schedule = entry.schedule, let group = group else { return [] }
-        return WidgetSelection.rows(schedule: schedule, groupID: group.id, now: entry.date)
+    private var all: [SchoolLesson] { group.flatMap { entry.schedule?.lessons(for: $0.id) } ?? [] }
+    private var next: SchoolLesson? {
+        guard let schedule = entry.schedule, let group = group else { return nil }
+        return WidgetSelection.next(schedule: schedule, groupID: group.id, now: entry.date)
     }
-    private var publicationLabel: String {
+    private var day: Int {
+        guard let schedule = entry.schedule, let group = group else { return 0 }
+        return WidgetSelection.day(schedule: schedule, groupID: group.id, now: entry.date)
+    }
+    private var dayRows: [SchoolLesson] { all.filter { $0.day == day } }
+    private var periodNumbers: [Int] {
+        guard let last = all.map(\.period).max(), last > 0 else { return Array(1...10) }
+        return Array(1...last)
+    }
+    private var publication: String {
         guard let week = entry.schedule?.week else { return "" }
-        let dates = "\(SchoolDate.short(week.from))–\(SchoolDate.short(week.until.addingTimeInterval(-1)))"
-        return archived ? "Pēdējais saraksts · \(dates)" : dates
+        let range = "\(SchoolDate.short(week.from))–\(SchoolDate.short(week.until.addingTimeInterval(-1)))"
+        return archived ? "Pēdējais · \(range)" : range
     }
     private var status: String {
-        if let message = entry.message, entry.schedule == nil { return message }
-        if entry.schedule != nil && group == nil { return "Grupa nav atrasta. Rediģē logrīku." }
-        return "Nav nākamo stundu. Atver sarakstu."
+        if entry.schedule == nil { return entry.message ?? "Ielādē sarakstu…" }
+        if group == nil { return "Grupa nav atrasta. Rediģē logrīku." }
+        return "Nav nākamo stundu"
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(group?.short ?? "\(entry.group). grupa").font(.caption.weight(.semibold))
-                Spacer()
-                Image(systemName: "calendar").foregroundStyle(.blue)
-            }
-            if entry.schedule != nil {
-                Text(publicationLabel).font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(archived ? Color.orange : Color.secondary).lineLimit(2)
-            }
-            if let first = upcoming.first {
-                Text("\(SchoolDate.dayNames[first.day]) · \(first.time)")
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                Text(first.subject).font(.system(size: family == .systemSmall ? 17 : 19, weight: .semibold)).tracking(-0.4).lineLimit(family == .systemSmall ? 2 : 1)
-                if family != .systemSmall {
-                    Text([first.room, first.subgroup].filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.caption).lineLimit(1)
-                }
-                if family != .systemSmall {
-                    ForEach(Array(upcoming.dropFirst().prefix(family == .systemLarge ? 4 : 1))) { lesson in
-                        HStack(alignment: .top) {
-                            Text(lesson.start.map(SchoolDate.time) ?? "?").monospacedDigit().foregroundStyle(.blue)
-                            Text(lesson.subject).lineLimit(1)
-                        }.font(.caption)
-                    }
+        Group {
+            if entry.schedule == nil || group == nil {
+                VStack(alignment: .leading, spacing: 12) {
+                    header("Stundu saraksts")
+                    Text(status).font(.subheadline).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
             } else {
-                Text(status).font(.subheadline).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            if archived {
-                Text(entry.message ?? "Jaunais vēl nav publicēts")
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-            } else if let message = entry.message, entry.schedule != nil {
-                Text(message).font(.caption2).foregroundStyle(.orange).lineLimit(1)
-            } else if let schedule = entry.schedule {
-                Text("Dati \(SchoolDate.short(schedule.fetchedAt)) \(SchoolDate.time(schedule.fetchedAt))")
-                    .font(.caption2).foregroundStyle(.secondary)
+                switch family {
+                case .systemSmall: small
+                case .systemMedium: medium
+                default: large
+                }
             }
         }.containerBackground(.background, for: .widget)
+    }
+    private func header(_ title: String) -> some View {
+        HStack(spacing: 4) {
+            Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            Spacer(minLength: 2)
+            Text(group?.short ?? "\(entry.group). grupa")
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(.blue).lineLimit(1)
+        }
+    }
+    private var publicationView: some View {
+        HStack(spacing: 3) {
+            Text(publication)
+            if entry.message != nil { Image(systemName: "wifi.slash") }
+        }.font(.system(size: 9)).foregroundStyle(archived ? Color.orange : Color.secondary).lineLimit(1)
+    }
+    private var small: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            header(archived ? "Pārskats" : "Nākamā")
+            if let lesson = next {
+                Text(lesson.start.map(SchoolDate.time) ?? "—")
+                    .font(.system(size: 29, weight: .bold)).tracking(-1).foregroundStyle(.blue)
+                Text(lesson.subject).font(.system(size: 15, weight: .semibold)).lineLimit(2).minimumScaleFactor(0.85)
+                HStack(spacing: 4) {
+                    Text(String(SchoolDate.dayNames[lesson.day].prefix(2)) + ".")
+                    if !lesson.room.isEmpty { Text("· " + lesson.room) }
+                }.font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            } else {
+                Text("Nav nākamo stundu").font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            publicationView
+        }
+    }
+    private var medium: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            header(SchoolDate.dayNames[day])
+            if dayRows.isEmpty {
+                Text("Šai dienai nav stundu").font(.subheadline).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            } else {
+                let half = (dayRows.count + 1) / 2
+                HStack(alignment: .top, spacing: 12) {
+                    dayColumn(Array(dayRows.prefix(half)))
+                    Rectangle().fill(Color.secondary.opacity(0.15)).frame(width: 1)
+                    dayColumn(Array(dayRows.dropFirst(half)))
+                }.frame(maxHeight: .infinity)
+            }
+            publicationView
+        }
+    }
+    private func dayColumn(_ rows: [SchoolLesson]) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(rows) { lesson in
+                HStack(spacing: 4) {
+                    Text(lesson.start.map(SchoolDate.time) ?? "—")
+                        .font(.system(size: 9, weight: .medium)).monospacedDigit().foregroundStyle(.blue)
+                    Text(compact(lesson.subject)).font(.system(size: 10, weight: .medium))
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Spacer(minLength: 0)
+                    if !lesson.room.isEmpty {
+                        Text(lesson.room).font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }.frame(maxHeight: .infinity, alignment: .center)
+                    .accessibilityLabel("\(lesson.time), \(lesson.subject), \(lesson.room)")
+            }
+            if rows.isEmpty { Spacer(minLength: 0) }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    private var large: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            header("Visa nedēļa")
+            HStack(spacing: 3) {
+                Color.clear.frame(width: 14, height: 15)
+                ForEach(0..<5) { day in
+                    Text(["Pr", "Ot", "Tr", "Ce", "Pk"][day])
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            VStack(spacing: 3) {
+                ForEach(periodNumbers, id: \.self) { period in
+                    HStack(spacing: 3) {
+                        Text("\(period)").font(.system(size: 9)).foregroundStyle(.secondary).frame(width: 14)
+                        ForEach(0..<5) { day in
+                            weekCell(all.filter { $0.day == day && $0.period == period })
+                        }
+                    }.frame(maxHeight: .infinity)
+                }
+            }.frame(maxHeight: .infinity)
+            publicationView
+        }
+    }
+    private func weekCell(_ lessons: [SchoolLesson]) -> some View {
+        VStack(spacing: 1) {
+            if lessons.isEmpty {
+                Text("·").foregroundStyle(.quaternary)
+            } else {
+                ForEach(lessons) { lesson in
+                    Text(compact(lesson.subject))
+                        .font(.system(size: 9, weight: .medium)).lineLimit(2).minimumScaleFactor(0.6)
+                        .multilineTextAlignment(.center)
+                        .accessibilityLabel("\(lesson.period). stunda, \(lesson.subject), \(lesson.room)")
+                }
+            }
+        }.padding(.horizontal, 2).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(lessons.isEmpty ? Color.secondary.opacity(0.04) : Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 5))
+    }
+    private func compact(_ subject: String) -> String {
+        let words = subject.split(whereSeparator: { $0.isWhitespace })
+        if subject.count <= 13 { return subject }
+        return words.map { $0.count > 5 ? String($0.prefix(4)) + "." : String($0) }.joined(separator: " ")
     }
 }
 
@@ -135,7 +231,7 @@ struct StunduWidget: Widget {
             ScheduleWidgetView(entry: entry)
         }
         .configurationDisplayName("Stundu Saraksts")
-        .description("Nākamās stundas, laiki un kabineti. Grupu maini logrīka iestatījumos.")
+        .description("Mazais: nākamā stunda. Vidējais: visa diena. Lielais: visa nedēļa.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }

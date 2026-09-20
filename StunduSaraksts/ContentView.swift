@@ -10,13 +10,12 @@ final class ScheduleModel: ObservableObject {
     @Published private(set) var displayed: SchoolSchedule?
     @Published private(set) var currentGroup: SchoolGroup?
     @Published private(set) var days: [Int: [SchoolLesson]] = [:]
-    @Published private(set) var breakBefore: [String: Int] = [:]
     @Published private(set) var periods: [String: [LessonPeriod]] = [:]
 
     // Rebuild on data/group/settings changes only, never when a day button is tapped.
     func prepare(group: String, shortenedDates: Set<String>) {
         guard let source = schedule else {
-            displayed = nil; currentGroup = nil; days = [:]; periods = [:]; breakBefore = [:]; return
+            displayed = nil; currentGroup = nil; days = [:]; periods = [:]; return
         }
         let selected = source.group(matching: group)
         let own = selected.map { source.lessons(for: $0.id) } ?? []
@@ -24,23 +23,19 @@ final class ScheduleModel: ObservableObject {
             .applyingShortenedDates(shortenedDates)
         var slots: [String: [LessonPeriod]] = [:]
         var cards: [SchoolLesson] = []
-        var breaks: [String: Int] = [:]
         for lesson in filtered.lessons {
             let date = SchoolDate.calendar.date(byAdding: .day, value: lesson.day, to: SchoolDate.monday(source.week.from))!
             let shortened = shortenedDates.contains(BellTimes.dateKey(date))
             let parts = lesson.splitPeriods(on: date, shortened: shortened)
-            for (index, part) in parts.enumerated() {
+            for part in parts {
                 cards.append(part)
                 slots[part.id] = part.periodTimes(on: date, shortened: shortened)
-                if index > 0, let end = parts[index - 1].end, let start = part.start, start > end {
-                    breaks[part.id] = Int(start.timeIntervalSince(end) / 60)
-                }
+
             }
         }
         currentGroup = selected
         displayed = filtered
         days = Dictionary(grouping: cards.sorted { ($0.day, $0.period, $0.id) < ($1.day, $1.period, $1.id) }, by: \.day)
-        breakBefore = breaks
         periods = slots
     }
     func refresh(week: PublishedWeek? = nil) async {
@@ -110,13 +105,6 @@ struct ContentView: View {
                             TimelineView(.periodic(from: .now, by: 60)) { context in
                                 LazyVStack(spacing: 12) {
                                     ForEach(lessons) { lesson in
-                                        if let minutes = model.breakBefore[lesson.id] {
-                                            HStack(spacing: 10) {
-                                                Rectangle().fill(Color.secondary.opacity(0.15)).frame(height: 1)
-                                                Text("\(minutes) min starpbrīdis").font(.caption2).foregroundStyle(.secondary).fixedSize()
-                                                Rectangle().fill(Color.secondary.opacity(0.15)).frame(height: 1)
-                                            }.padding(.horizontal, 24).padding(.vertical, 2)
-                                        }
                                         lessonCard(lesson, now: context.date)
                                     }
                                 }
