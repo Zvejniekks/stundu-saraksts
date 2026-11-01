@@ -1,24 +1,35 @@
-# Stundu Saraksts · 0.6
+# Stundu Saraksts · 0.9
 
-## Izmaiņas
+## Jaunums 0.9
 
-- Aplikācijā vairs nav starpbrīžu uzrakstu vai atdalītāju. Dubultstundu stundas paliek atsevišķās kartītēs.
-- Mazais logrīks rāda tikai vienu nākamo stundu (sākums vēl priekšā), tās laiku un kabinetu. Dubultstundas otrā daļa tiek uzskatīta par atsevišķu stundu.
-- Vidējais logrīks rāda visu izvēlēto dienu, arī jau beigušās stundas. Lai viss ietilptu, saraksts sadalīts divās kolonnās — lasi kreiso no augšas uz leju, tad labo.
-- Lielais logrīks rāda visu pirmdienas–piektdienas nedēļu vienā tabulā ar stundu numuriem. Priekšmetu nosaukumi saīsināti; pilnie nosaukumi ir pieejami aplikācijā un VoiceOver.
-- Neviena dienas vai nedēļas stunda netiek atmesta ar fiksētu ierakstu limitu. Apakšgrupu paralēlās stundas redzamas vienā tabulas šūnā. Ļoti blīvos sarakstos teksts būs mazāks.
-- Ja jaunā nedēļa nav pieejama, logrīki rāda pēdējo publicēto nedēļu ar atzīmi un datumiem. Mazais šajā gadījumā rāda vienu vēsturisku stundu kā “Pārskats”, nevis apgalvo, ka tā būs nākamā stunda.
+Vidējais logrīks no 17:00 rāda nākamās mācību dienas stundas. Piektdien pēc 17:00 un nedēļas nogalē tas rāda pirmdienu, ja nākamā nedēļa ir publicēta; ja nav, paliek pēdējā publicētā nedēļa. Mazais logrīks no 17:00 arī ņem vērā nākamo nedēļu.
 
-## Uzstādīšana
+Aplikācijas labojumi: nedēļas nogalē atveras pirmdiena, nevis piektdiena. Atgriežoties aplikācijā, dati atjaunojas, un jaunā dienā tiek atvērta šodiena. Atjaunojot sarakstu, izvēlētā nedēļa paliek atvērta. Citas nedēļas skatīšana vairs nepārraksta bezsaistes datus.
 
-Izpako `StunduSaraksts-v0.6.zip`. GitHub repozitorija sākumā caur **Add file → Upload files** ievelc mapes `StunduSaraksts`, `Shared`, `StunduWidget`, `Tests` un failu `project.yml`. Pēc Commit changes sagaidi Actions rezultātu, lejupielādē IPA un instalē caur AltStore, saglabājot App Extensions. Pēc atjauninājuma atver aplikāciju. Ja redzams vecais logrīks, noņem to un pievieno vēlreiz izvēlētajā izmērā.
+## Lasāmāks dienas logrīks
 
-ZIP satur arī `.github/workflows/build.yml` ar Swift testiem; atjaunini šo failu, lai tie palaistos Actions. Nemaini mapju struktūru un neaugšupielādē pašu ZIP tā satura vietā.
+Priekšmeta nosaukums tagad ir atsevišķā rindā, laiks un kabinets zem tā. Visiem nosaukumiem ir vienāds izmērs; garš nosaukums vairs nesamazina savu fontu. Pie 9–10 ierakstiem abas kolonnas izmanto vienotu kompaktāku izmēru. Krievu/angļu/vācu valodai un valodas, kultūras un izpausmes priekšmetam ir saprotami īsie nosaukumi. Neatpazītus nosaukumus nešķeļ vārdu fragmentos; ja nepietiek vietas, beigas saīsina ar daudzpunkti. Saglabāti arī 0.7 labojumi.
 
-## Iestatījumi
+## Kompaktāks aplikācijas dizains
 
-Grupu logrīkam iestata atsevišķi (noklusējums: 31). Pirmssvētku datums ir `GGGG-MM-DD`. Pirmdienas, otrdienas–ceturtdienas un piektdienas laiki ir pēc lietotāja atsūtītās skolas tabulas. Logrīka atjaunošanu kontrolē iOS.
+Noņemts lielais skolas nosaukuma/dienas virsraksta bloks un paskaidrojums “Apskati publicēto nedēļu…”. Augšā ir kompakts datums un nedēļas izvēle, zemāk piecas dienu pogas. Samazinātas atstarpes un stundu kartīšu iekšējās malas. Skatāmās nedēļas datumi joprojām ir redzami, tāpēc veca nedēļa nav paslēpta aiz šodienas nosaukuma.
+
+## Logrīki
+
+Pusdienas ir izņemtas no visiem trim logrīkiem. Pašā aplikācijā pusdienas paliek. Filtrs atpazīst konkrētus pusdienu apzīmējumus, nevis jebkuru priekšmetu, kura nosaukumā ir līdzīgs vārds.
+
+- Mazais: tikai nākamā mācību stunda.
+- Vidējais: visas izvēlētās dienas mācību stundas divās kolonnās. 9 ieraksti = 5 kreisajā, 4 labajā; 10 ieraksti = 5 un 5. Lasi kreiso kolonnu no augšas uz leju, tad labo. Kolonnu rindas izlīdzinātas arī pie nepāra skaita. Dubultstundas skaita kā divas stundas; paralēlo apakšgrupu ieraksti paliek atsevišķi.
+- Lielais: piecu dienu tabula līdz pēdējam izmantotajam stundas numuram. Ja ir 10. stunda, tiek pievienota 10. rinda; ja 11.–13., arī tās. Pusdienu šūnas ir tukšas, stundu numuri netiek pārbīdīti. Nosaukumi saīsināti, rindas sadala pieejamo augstumu.
+
+Ļoti blīvā sarakstā nosaukumi kļūst īsāki un teksts mazāks. Logrīkos nav ritināšanas; pilnos nosaukumus skaties aplikācijā. Pārskatā saglabājas visas stundas, netiek izmantots patvaļīgs 8 vai 9 stundu limits.
+
+## Atjaunināšana
+
+Izpako `StunduSaraksts-v0.9.zip`, GitHub augšupielādē mapes `StunduSaraksts`, `Shared`, `StunduWidget`, `Tests` un `project.yml`. Palaid GitHub Actions, lejupielādē IPA un instalē AltStore ar saglabātiem App Extensions. Atver aplikāciju pēc instalēšanas; ja logrīks nerāda izmaiņas, noņem un pievieno to vēlreiz.
+
+Atjaunini `.github/workflows/build.yml` no ZIP, lai Actions pirms būvēšanas palaistu Swift testus.
 
 ## Pārbaudes
 
-Pievienoti Swift testi, kas pārbauda nākamās stundas atlasi, pilnas dienas saglabāšanu pēc pusdienlaika un visu nedēļas stundu saglabāšanu pēc dubultstundu sadalīšanas. Konfigurācija, datu piemērs un ZIP pārbaudīti lokāli. Šajā vidē nav Swift/Xcode, tādēļ Swift testi, iOS kompilēšana un reālais logrīku izkārtojums vēl jāpārbauda GitHub Actions un iPhone.
+0.9: pievienoti testi pārejai 17:00, piektdienas vakaram, nedēļas nogalei un aplikācijas sākuma dienai. Pievienoti testi 9/10 ierakstu sadalījumam, 10. un 13. stundas rindai, pusdienu izslēgšanai un sākotnējo numuru saglabāšanai. Iepriekšējie datu testi saglabāti. Šajā vidē nav Swift/Xcode — jaunā versija vēl jāsakompilē GitHub Actions un izskats jāpārbauda iPhone. Nav veikts reāla WidgetKit izkārtojuma renderējums.

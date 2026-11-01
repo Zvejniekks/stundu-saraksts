@@ -122,6 +122,40 @@ final class TimetableTests: XCTestCase {
         XCTAssertEqual(WidgetSelection.week(from: [week, future], now: SchoolDate.iso("2026-09-19")!)?.id, future.id)
         XCTAssertNil(WidgetSelection.week(from: [], now: Date()))
     }
+    func testDayWidgetMovesToNextDayAtFivePM() throws {
+        let schedule = try TimetableParser.schedule(fixture(), week: week)
+        let tuesday = SchoolDate.iso("2026-09-15")!, friday = SchoolDate.iso("2026-09-18")!
+        XCTAssertEqual(WidgetSelection.day(schedule: schedule, groupID: "-257", now: SchoolDate.at("16:59", on: tuesday)!), 1)
+        XCTAssertEqual(WidgetSelection.day(schedule: schedule, groupID: "-257", now: SchoolDate.at("17:00", on: tuesday)!), 2)
+        // Friday evening without a published next week stays on Friday.
+        XCTAssertEqual(WidgetSelection.day(schedule: schedule, groupID: "-257", now: SchoolDate.at("17:00", on: friday)!), 4)
+    }
+    func testFridayEveningAndWeekendShowNextMonday() {
+        let future = PublishedWeek(id: "next", title: "next", from: SchoolDate.iso("2026-09-21")!, until: SchoolDate.iso("2026-09-26")!)
+        let friday = SchoolDate.iso("2026-09-18")!, sunday = SchoolDate.iso("2026-09-20")!
+        XCTAssertEqual(WidgetSelection.week(from: [future, week], now: SchoolDate.at("16:59", on: friday)!)?.id, week.id)
+        XCTAssertEqual(WidgetSelection.week(from: [future, week], now: SchoolDate.at("17:00", on: friday)!)?.id, future.id)
+        XCTAssertEqual(WidgetSelection.displayDate(SchoolDate.at("17:00", on: friday)!), future.from)
+        XCTAssertEqual(WidgetSelection.displayDate(SchoolDate.at("10:00", on: sunday)!), future.from)
+        XCTAssertEqual(WidgetSelection.displayDate(SchoolDate.at("18:00", on: sunday)!), future.from)
+        let next = SchoolSchedule(week: future, groups: [], lessons: [], fetchedAt: friday)
+        XCTAssertEqual(WidgetSelection.day(schedule: next, groupID: "-257", now: SchoolDate.at("17:00", on: friday)!), 0)
+    }
+    func testNextDaySwitchIsAlwaysAhead() {
+        let tuesday = SchoolDate.iso("2026-09-15")!, wednesday = SchoolDate.iso("2026-09-16")!
+        XCTAssertEqual(WidgetSelection.nextDaySwitch(after: SchoolDate.at("16:00", on: tuesday)!), SchoolDate.at("17:00", on: tuesday)!)
+        XCTAssertEqual(WidgetSelection.nextDaySwitch(after: SchoolDate.at("17:00", on: tuesday)!), SchoolDate.at("17:00", on: wednesday)!)
+    }
+    func testAppOpensOnMondayDuringWeekend() {
+        let future = PublishedWeek(id: "next", title: "next", from: SchoolDate.iso("2026-09-21")!, until: SchoolDate.iso("2026-09-26")!)
+        let saturday = WidgetSelection.schoolDay(SchoolDate.at("12:00", on: SchoolDate.iso("2026-09-19")!)!)
+        XCTAssertEqual(SchoolDate.day(saturday), 0)
+        XCTAssertEqual(WidgetSelection.week(from: [future, week], on: saturday)?.id, future.id)
+        // Friday stays Friday in the app: its 17:00 switch is for the widget only.
+        let friday = WidgetSelection.schoolDay(SchoolDate.at("18:00", on: SchoolDate.iso("2026-09-18")!)!)
+        XCTAssertEqual(SchoolDate.day(friday), 4)
+        XCTAssertEqual(WidgetSelection.week(from: [future, week], on: friday)?.id, week.id)
+    }
     func testSplitCardsKeepEachPeriodAndSubject() throws {
         let schedule = try TimetableParser.schedule(fixture(), week: week)
         let lesson = try XCTUnwrap(schedule.lessons.first { $0.day == 4 && $0.durationPeriods == 2 })
@@ -154,11 +188,44 @@ final class TimetableTests: XCTestCase {
     }
     func testWidgetPreparationPreservesWholeWeek() throws {
         let source = try TimetableParser.schedule(fixture(), week: week)
-        let expected = source.lessons(for: "-257").reduce(0) { $0 + $1.durationPeriods }
+        let expected = source.lessons(for: "-257").filter { !$0.isLunch }.reduce(0) { $0 + $1.durationPeriods }
         let prepared = WidgetSelection.prepare(source, group: "31", shortenedDates: [])
         XCTAssertEqual(prepared.lessons.count, expected)
         XCTAssertEqual(Set(prepared.lessons.map(\.day)), Set(0..<5))
         XCTAssertEqual(Set(prepared.lessons.map(\.id)).count, expected)
+    }
+
+    private func exampleLesson(period: Int, subject: String = "Matemātika") -> SchoolLesson {
+        SchoolLesson(id: "p\(period)", groupID: "-257", day: 0, period: period, durationPeriods: 1,
+            subject: subject, teacher: "", room: "115", subgroup: "", start: nil, end: nil)
+    }
+    func testNineAndTenLessonsStayVisibleInDayWidget() {
+        for count in [9, 10] {
+            let rows = (1...count).map { exampleLesson(period: $0) }
+            let columns = WidgetSelection.columns(rows)
+            XCTAssertEqual(columns.left.count, 5)
+            XCTAssertEqual(columns.right.count, count - 5)
+            XCTAssertEqual((columns.left + columns.right).map(\.id), rows.map(\.id))
+        }
+    }
+    func testTenthPeriodStaysInWeekGridAfterLunchRemoval() {
+        let rows = (1...10).map { exampleLesson(period: $0, subject: $0 == 6 ? "Pusdienas" : "Matemātika") }
+        let visible = rows.filter { !$0.isLunch }
+        XCTAssertEqual(visible.count, 9)
+        XCTAssertEqual(WidgetSelection.periodNumbers(visible), Array(1...10))
+        XCTAssertEqual(visible.last?.period, 10)
+        XCTAssertFalse(visible.contains { $0.period == 6 })
+        XCTAssertEqual(WidgetSelection.periodNumbers([exampleLesson(period: 13)]).last, 13)
+    }
+    func testLunchRemovedFromWidgetsButSourceUnchanged() throws {
+        let source = try TimetableParser.schedule(fixture(), week: week)
+        XCTAssertTrue(source.lessons.contains( where: { $0.isLunch }))
+        let prepared = WidgetSelection.prepare(source, group: "31", shortenedDates: [])
+        XCTAssertFalse(prepared.lessons.contains(where: { $0.isLunch }))
+        XCTAssertTrue(exampleLesson(period: 1, subject: " PUSDIENAS ").isLunch)
+        XCTAssertTrue(exampleLesson(period: 1, subject: "Pusd.").isLunch)
+        XCTAssertFalse(exampleLesson(period: 1, subject: "Pusdienu gatavošana").isLunch)
+        XCTAssertEqual(source.lessons.count, 26)
     }
 
 }
