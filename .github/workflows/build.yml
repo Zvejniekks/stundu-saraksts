@@ -3,6 +3,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -39,3 +42,15 @@ jobs:
         with:
           name: StunduSaraksts-ipa
           path: StunduSaraksts.ipa
+
+      # Artifacts always download as a zip; a release asset stays a plain .ipa.
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(grep -m1 CFBundleShortVersionString project.yml | cut -d'"' -f2)
+          gh release create "build-$GITHUB_RUN_NUMBER" StunduSaraksts.ipa \
+            --target "$GITHUB_SHA" \
+            --title "Stundu Saraksts $version (build $GITHUB_RUN_NUMBER)" \
+            --notes "Instalē ar AltStore un saglabā App Extensions."
