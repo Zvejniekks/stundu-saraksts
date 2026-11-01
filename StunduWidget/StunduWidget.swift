@@ -53,15 +53,18 @@ struct ScheduleProvider: AppIntentTimelineProvider {
         }
         schedule = schedule.map { WidgetSelection.prepare($0, group: configuration.group, shortenedDates: configuration.shortenedDates) }
         var dates = [now]
+        let nextDay = WidgetSelection.nextDaySwitch(after: now)
         if let schedule = schedule, let group = schedule.group(matching: configuration.group) {
             let horizon = now.addingTimeInterval(6 * 3600)
             dates += schedule.lessons(for: group.id).flatMap { [$0.start, $0.end].compactMap { $0 } }
                 .filter { $0 > now && $0 < horizon }
+            if nextDay < horizon { dates.append(nextDay) }
         }
         let entries = Array(Set(dates)).sorted().map {
             ScheduleEntry(date: $0, group: configuration.group, schedule: schedule, message: message)
         }
-        return Timeline(entries: entries, policy: .after(now.addingTimeInterval(3600)))
+        // Reload at 17:00 too: on Friday the next day is in another week's data.
+        return Timeline(entries: entries, policy: .after(min(now.addingTimeInterval(3600), nextDay)))
     }
 }
 
@@ -70,7 +73,7 @@ struct ScheduleWidgetView: View {
     @Environment(\.widgetFamily) private var family
     private var group: SchoolGroup? { entry.schedule?.group(matching: entry.group) }
     private var archived: Bool { entry.schedule.map { $0.week.until <= entry.date } ?? false }
-    private var all: [SchoolLesson] { group.flatMap { entry.schedule?.lessons(for: $0.id) } ?? [] }
+    private var all: [SchoolLesson] { (group.flatMap { entry.schedule?.lessons(for: $0.id) } ?? []).filter { !$0.isLunch } }
     private var next: SchoolLesson? {
         guard let schedule = entry.schedule, let group = group else { return nil }
         return WidgetSelection.next(schedule: schedule, groupID: group.id, now: entry.date)
@@ -80,10 +83,6 @@ struct ScheduleWidgetView: View {
         return WidgetSelection.day(schedule: schedule, groupID: group.id, now: entry.date)
     }
     private var dayRows: [SchoolLesson] { all.filter { $0.day == day } }
-    private var periodNumbers: [Int] {
-        guard let last = all.map(\.period).max(), last > 0 else { return Array(1...10) }
-        return Array(1...last)
-    }
     private var publication: String {
         guard let week = entry.schedule?.week else { return "" }
         let range = "\(SchoolDate.short(week.from))–\(SchoolDate.short(week.until.addingTimeInterval(-1)))"
@@ -144,42 +143,51 @@ struct ScheduleWidgetView: View {
         }
     }
     private var medium: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             header(SchoolDate.dayNames[day])
             if dayRows.isEmpty {
                 Text("Šai dienai nav stundu").font(.subheadline).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             } else {
-                let half = (dayRows.count + 1) / 2
-                HStack(alignment: .top, spacing: 12) {
-                    dayColumn(Array(dayRows.prefix(half)))
+                let columns = WidgetSelection.columns(dayRows)
+                HStack(alignment: .top, spacing: 10) {
+                    dayColumn(columns.left, slots: columns.left.count)
                     Rectangle().fill(Color.secondary.opacity(0.15)).frame(width: 1)
-                    dayColumn(Array(dayRows.dropFirst(half)))
+                    dayColumn(columns.right, slots: columns.left.count)
                 }.frame(maxHeight: .infinity)
             }
             publicationView
         }
     }
-    private func dayColumn(_ rows: [SchoolLesson]) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+    private func dayColumn(_ rows: [SchoolLesson], slots: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(rows) { lesson in
-                HStack(spacing: 4) {
-                    Text(lesson.start.map(SchoolDate.time) ?? "—")
-                        .font(.system(size: 9, weight: .medium)).monospacedDigit().foregroundStyle(.blue)
-                    Text(compact(lesson.subject)).font(.system(size: 10, weight: .medium))
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                    Spacer(minLength: 0)
-                    if !lesson.room.isEmpty {
-                        Text(lesson.room).font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }.frame(maxHeight: .infinity, alignment: .center)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(SubjectDisplay.name(lesson.subject))
+                        .font(.system(size: slots > 4 ? 10 : 12, weight: .semibold))
+                        .foregroundStyle(.primary).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 4) {
+                        Text(lesson.start.map(SchoolDate.time) ?? "—")
+                            .monospacedDigit().foregroundStyle(.blue)
+                        Spacer(minLength: 2)
+                        if !lesson.room.isEmpty {
+                            Text(lesson.room).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }.font(.system(size: slots > 4 ? 8 : 9, weight: .medium))
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(lesson.time), \(lesson.subject), \(lesson.room)")
             }
-            if rows.isEmpty { Spacer(minLength: 0) }
+            ForEach(0..<max(0, slots - rows.count), id: \.self) { _ in
+                Color.clear.frame(maxHeight: .infinity)
+            }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private var large: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let lessons = all
+        let numbers = WidgetSelection.periodNumbers(lessons)
+        return VStack(alignment: .leading, spacing: 6) {
             header("Visa nedēļa")
             HStack(spacing: 3) {
                 Color.clear.frame(width: 14, height: 15)
@@ -190,11 +198,11 @@ struct ScheduleWidgetView: View {
                 }
             }
             VStack(spacing: 3) {
-                ForEach(periodNumbers, id: \.self) { period in
+                ForEach(numbers, id: \.self) { period in
                     HStack(spacing: 3) {
                         Text("\(period)").font(.system(size: 9)).foregroundStyle(.secondary).frame(width: 14)
                         ForEach(0..<5) { day in
-                            weekCell(all.filter { $0.day == day && $0.period == period })
+                            weekCell(lessons.filter { $0.day == day && $0.period == period })
                         }
                     }.frame(maxHeight: .infinity)
                 }
@@ -218,9 +226,7 @@ struct ScheduleWidgetView: View {
             .background(lessons.isEmpty ? Color.secondary.opacity(0.04) : Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 5))
     }
     private func compact(_ subject: String) -> String {
-        let words = subject.split(whereSeparator: { $0.isWhitespace })
-        if subject.count <= 13 { return subject }
-        return words.map { $0.count > 5 ? String($0.prefix(4)) + "." : String($0) }.joined(separator: " ")
+        SubjectDisplay.name(subject)
     }
 }
 
@@ -231,7 +237,7 @@ struct StunduWidget: Widget {
             ScheduleWidgetView(entry: entry)
         }
         .configurationDisplayName("Stundu Saraksts")
-        .description("Mazais: nākamā stunda. Vidējais: visa diena. Lielais: visa nedēļa.")
+        .description("Mazais: nākamā stunda. Vidējais: visa diena, no 17:00 nākamā. Lielais: visa nedēļa.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }

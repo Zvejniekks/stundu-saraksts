@@ -11,6 +11,7 @@ final class ScheduleModel: ObservableObject {
     @Published private(set) var currentGroup: SchoolGroup?
     @Published private(set) var days: [Int: [SchoolLesson]] = [:]
     @Published private(set) var periods: [String: [LessonPeriod]] = [:]
+    var pickedWeekID: String?
 
     // Rebuild on data/group/settings changes only, never when a day button is tapped.
     func prepare(group: String, shortenedDates: Set<String>) {
@@ -46,11 +47,16 @@ final class ScheduleModel: ObservableObject {
             let client = EduPageClient()
             let available = try await client.weeks()
             weeks = available
-            guard let selected = week ?? available.first(where: { $0.contains(Date()) }) ?? available.first else { return }
+            let current = WidgetSelection.week(from: available, on: WidgetSelection.schoolDay(Date()))
+            guard let selected = week ?? available.first(where: { $0.id == pickedWeekID }) ?? current else { return }
             let loaded = try await client.schedule(week: selected)
             schedule = loaded
-            do { try ScheduleCache.save(loaded) }
-            catch { self.error = "Dati ielādēti, bet tos neizdevās saglabāt bezsaistē." }
+            if week != nil { pickedWeekID = selected.id }
+            // Offline data stays the current week, even after browsing another one.
+            if selected.id == current?.id {
+                do { try ScheduleCache.save(loaded) }
+                catch { self.error = "Dati ielādēti, bet tos neizdevās saglabāt bezsaistē." }
+            }
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
             self.error = "Neizdevās atjaunot sarakstu. \(error.localizedDescription)"
@@ -62,7 +68,9 @@ struct ContentView: View {
     @StateObject private var model = ScheduleModel()
     @AppStorage("selectedGroup") private var group = "31"
     @AppStorage("shortenedDates") private var shortenedDates = ""
-    @State private var day = min(SchoolDate.day(Date()), 4)
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var day = SchoolDate.day(WidgetSelection.schoolDay(Date()))
+    @State private var openedOn = SchoolDate.dateKey(Date())
     @State private var showGroups = false
     @State private var showSettings = false
     @State private var search = ""
@@ -85,8 +93,7 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    hero
+                VStack(alignment: .leading, spacing: 16) {
                     if let error = model.error {
                         Label(error, systemImage: "wifi.exclamationmark")
                             .font(.footnote).foregroundStyle(.orange).padding(16)
@@ -103,7 +110,7 @@ struct ContentView: View {
                         } else {
                             daySummary
                             TimelineView(.periodic(from: .now, by: 60)) { context in
-                                LazyVStack(spacing: 12) {
+                                LazyVStack(spacing: 8) {
                                     ForEach(lessons) { lesson in
                                         lessonCard(lesson, now: context.date)
                                     }
@@ -118,7 +125,7 @@ struct ContentView: View {
                             ContentUnavailableView("Saraksts vēl nav ielādēts", systemImage: "calendar", description: Text("Pārbaudi internetu un atjauno sarakstu."))
                         }
                     }
-                }.padding(.horizontal, 22).padding(.top, 28).padding(.bottom, 36)
+                }.padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 20)
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Stundas")
@@ -142,6 +149,16 @@ struct ContentView: View {
             }
             .refreshable { await model.refresh() }
             .task { await model.refresh() }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                let today = SchoolDate.dateKey(Date())
+                if today != openedOn {
+                    openedOn = today
+                    model.pickedWeekID = nil
+                    day = SchoolDate.day(WidgetSelection.schoolDay(Date()))
+                }
+                Task { await model.refresh() }
+            }
             .onChange(of: model.schedule?.fetchedAt, initial: true) { _, _ in prepareDays() }
             .onChange(of: group) { _, _ in prepareDays() }
             .onChange(of: shortenedDates) { _, _ in prepareDays() }
@@ -152,43 +169,26 @@ struct ContentView: View {
 
     private func prepareDays() { model.prepare(group: group, shortenedDates: shortenedSet) }
 
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("VALMIERAS TEHNIKUMS")
-                .font(.system(size: 10, weight: .semibold)).tracking(2.2).foregroundStyle(.secondary)
-            Text(dayTitle + ".")
-                .font(.system(size: 43, weight: .bold, design: .default)).tracking(-1.8)
-                .lineLimit(1).minimumScaleFactor(0.65)
-                .accessibilityAddTraits(.isHeader)
-            HStack(spacing: 8) {
-                Text(fullDate).foregroundStyle(.secondary)
-                if SchoolDate.calendar.isDate(selectedDate, inSameDayAs: Date()) {
-                    Text("Šodien").foregroundStyle(blue)
-                }
-            }.font(.title3)
-        }.padding(.top, 4)
-    }
-
     private func weekPicker(_ schedule: SchoolSchedule) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Tava nedēļa").font(.subheadline.weight(.semibold))
-                Spacer()
-                Menu {
-                    ForEach(model.weeks) { week in
-                        Button(week.title) { Task { await model.refresh(week: week) } }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("\(SchoolDate.short(schedule.week.from))–\(SchoolDate.short(schedule.week.until.addingTimeInterval(-1)))")
-                        Image(systemName: "chevron.down").font(.caption2)
-                    }.font(.subheadline)
-                }.disabled(model.busy || model.weeks.isEmpty)
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(fullDate).font(.subheadline.weight(.semibold))
+                if SchoolDate.calendar.isDate(selectedDate, inSameDayAs: Date()) {
+                    Text("Šodien").font(.caption2).foregroundStyle(blue)
+                }
             }
-            if !schedule.week.contains(Date()) {
-                Text("Apskati publicēto nedēļu. Šis nav šodienas saraksts.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            Spacer(minLength: 4)
+            Menu {
+                ForEach(model.weeks) { week in
+                    Button(week.title) { Task { await model.refresh(week: week) } }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("\(SchoolDate.short(schedule.week.from))–\(SchoolDate.short(schedule.week.until.addingTimeInterval(-1)))")
+                    Image(systemName: "chevron.down").font(.caption2)
+                }.font(.caption.weight(.medium)).padding(.vertical, 10)
+            }.disabled(model.busy || model.weeks.isEmpty)
+                .accessibilityLabel("Izvēlēties nedēļu")
         }
     }
 
@@ -197,12 +197,12 @@ struct ContentView: View {
             ForEach(0..<5) { index in
                 let date = SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
                 Button { withAnimation(.easeInOut(duration: 0.18)) { day = index } } label: {
-                    VStack(spacing: 10) {
+                    VStack(spacing: 5) {
                         Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index]).font(.caption.weight(.medium))
                         Text("\(SchoolDate.calendar.component(.day, from: date))").font(.title3.weight(.semibold))
                     }
-                    .frame(maxWidth: .infinity).padding(.vertical, 15)
-                    .background(day == index ? Color.primary : surface, in: RoundedRectangle(cornerRadius: 22))
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(day == index ? Color.primary : surface, in: RoundedRectangle(cornerRadius: 16))
                     .foregroundStyle(day == index ? Color(.systemBackground) : Color.primary)
                 }.buttonStyle(.plain).accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.short(date))")
                     .accessibilityAddTraits(day == index ? .isSelected : [])
@@ -211,18 +211,12 @@ struct ContentView: View {
     }
 
     private var daySummary: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Dienas plāns").font(.title2.bold()).tracking(-0.6)
-                Text(isShortened ? "Pirmssvētku dienas laiki" : (day == 4 ? "Piektdienas laiki" : (day == 0 ? "Pirmdienas laiki" : "Parastie stundu laiki")))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+        HStack {
+            Text(dayTitle).font(.headline)
+            if isShortened { Text("Saīsinātā diena").font(.caption2).foregroundStyle(blue) }
             Spacer()
             if let end = lessons.compactMap(\.end).max() {
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(SchoolDate.time(end)).font(.title3.weight(.semibold)).monospacedDigit()
-                    Text("dienas beigas").font(.caption2).foregroundStyle(.secondary)
-                }
+                Text("Līdz \(SchoolDate.time(end))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
             }
         }
     }
@@ -263,9 +257,9 @@ struct ContentView: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(20)
-        .background(surface, in: RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(active ? blue.opacity(0.5) : Color.clear, lineWidth: 1))
+        .padding(16)
+        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(active ? blue.opacity(0.5) : Color.clear, lineWidth: 1))
     }
 
     private func footer(_ schedule: SchoolSchedule) -> some View {
