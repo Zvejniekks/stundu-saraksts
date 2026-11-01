@@ -26,7 +26,7 @@ Pusdienas ir izņemtas no visiem trim logrīkiem. Pašā aplikācijā pusdienas 
 
 ## Atjaunināšana
 
-Izpako `StunduSaraksts-v0.9.zip`, GitHub augšupielādē mapes `StunduSaraksts`, `Shared`, `StunduWidget`, `Tests` un `project.yml`. Palaid GitHub Actions, lejupielādē IPA un instalē AltStore ar saglabātiem App Extensions. Atver aplikāciju pēc instalēšanas; ja logrīks nerāda izmaiņas, noņem un pievieno to vēlreiz.
+Izpako `StunduSaraksts-v0.9.zip`, GitHub augšupielādē mapes `StunduSaraksts`, `Shared`, `StunduWidget`, `Tests` un `project.yml`. GitHub Actions uzbūvē IPA. Lejupielādē [jaunāko IPA](https://github.com/Zvejniekks/stundu-saraksts/releases/latest/download/StunduSaraksts.ipa) un instalē AltStore ar saglabātiem App Extensions. Atver aplikāciju pēc instalēšanas; ja logrīks nerāda izmaiņas, noņem un pievieno to vēlreiz.
 
 Atjaunini `.github/workflows/build.yml` no ZIP, lai Actions pirms būvēšanas palaistu Swift testus.
 
