@@ -27,7 +27,8 @@ enum WidgetSelection {
             ?? weeks.filter { $0.from > date }.min { $0.from < $1.from }
             ?? weeks.max { $0.from < $1.from }
     }
-    static func prepare(_ schedule: SchoolSchedule, group: String, shortenedDates: Set<String>) -> SchoolSchedule {
+    static func prepare(_ schedule: SchoolSchedule, group: String, shortenedDates: Set<String>,
+                        changes: [String: SubstitutionDay] = [:]) -> SchoolSchedule {
         let own = (schedule.group(matching: group).map { schedule.lessons(for: $0.id) } ?? []).filter { !$0.isLunch }
         let monday = SchoolDate.monday(schedule.week.from)
         let parts = own.flatMap { lesson -> [SchoolLesson] in
@@ -36,9 +37,10 @@ enum WidgetSelection {
         }
         return SchoolSchedule(week: schedule.week, groups: schedule.groups, lessons: parts, fetchedAt: schedule.fetchedAt)
             .applyingShortenedDates(shortenedDates)
+            .applyingChanges(changes, group: schedule.group(matching: group))
     }
     static func next(schedule: SchoolSchedule, groupID: String, now: Date) -> SchoolLesson? {
-        let all = schedule.lessons(for: groupID).filter { !$0.isLunch }
+        let all = schedule.lessons(for: groupID).filter { !$0.isLunch && $0.change?.cancelled != true }
         if schedule.week.until <= now { return all.first }
         return all.filter { ($0.start ?? .distantPast) > now }
             .min { ($0.start ?? .distantFuture) < ($1.start ?? .distantFuture) }
