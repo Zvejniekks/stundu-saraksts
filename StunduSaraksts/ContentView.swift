@@ -11,7 +11,23 @@ final class ScheduleModel: ObservableObject {
     @Published private(set) var currentGroup: SchoolGroup?
     @Published private(set) var days: [Int: [SchoolLesson]] = [:]
     @Published private(set) var periods: [String: [LessonPeriod]] = [:]
+    @Published private(set) var changes: [String: SubstitutionDay] = [:]
+    @Published private(set) var changesFailed = false
     var pickedWeekID: String?
+
+    /// Changes are published per day; load the visible week's school days from today on.
+    func loadChanges(for week: PublishedWeek) async {
+        let c = SchoolDate.calendar, today = c.startOfDay(for: Date())
+        let dates = (0..<5).compactMap { c.date(byAdding: .day, value: $0, to: SchoolDate.monday(week.from)) }
+            .filter { $0 >= today }
+        guard !dates.isEmpty else { return }
+        let client = EduPageClient()
+        var failed = false
+        for date in dates {
+            if let day = try? await client.substitutions(on: date) { changes[day.date] = day } else { failed = true }
+        }
+        changesFailed = failed
+    }
 
     // Rebuild on data/group/settings changes only, never when a day button is tapped.
     func prepare(group: String, shortenedDates: Set<String>) {
@@ -58,6 +74,9 @@ final class ScheduleModel: ObservableObject {
                 catch { self.error = "Dati ielādēti, bet tos neizdevās saglabāt bezsaistē." }
             }
             WidgetCenter.shared.reloadAllTimelines()
+            await loadChanges(for: selected)
+            await ChangeNotifier.check()
+            ChangeNotifier.scheduleBackgroundRefresh()
         } catch {
             self.error = "Neizdevās atjaunot sarakstu. \(error.localizedDescription)"
         }
@@ -68,6 +87,7 @@ struct ContentView: View {
     @StateObject private var model = ScheduleModel()
     @AppStorage("selectedGroup") private var group = "31"
     @AppStorage("shortenedDates") private var shortenedDates = ""
+    @AppStorage(ChangeNotifier.enabledKey) private var notifyChanges = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var day = SchoolDate.day(WidgetSelection.schoolDay(Date()))
     @State private var openedOn = SchoolDate.dateKey(Date())
@@ -89,6 +109,22 @@ struct ContentView: View {
         SchoolDate.full(selectedDate)
     }
     private var dayTitle: String { SchoolDate.dayNames[day] }
+    private let orange = Color(red: 0.95, green: 0.5, blue: 0.1)
+    private func date(ofDay index: Int) -> Date {
+        SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
+    }
+    private func changes(ofDay index: Int) -> [SubstitutionEntry] {
+        model.changes[SchoolDate.dateKey(date(ofDay: index))]?.entries(for: selected) ?? []
+    }
+    private var dayChanges: [SubstitutionEntry] { changes(ofDay: day) }
+    private func change(for lesson: SchoolLesson) -> SubstitutionEntry? {
+        dayChanges.first { $0.covers(lesson) && $0.firstPeriod != nil }
+    }
+    private func move(by offset: Int) {
+        let target = day + offset
+        guard (0..<5).contains(target) else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { day = target }
+    }
 
     var body: some View {
         NavigationStack {
@@ -103,14 +139,16 @@ struct ContentView: View {
                     if let schedule = schedule {
                         weekPicker(schedule)
                         dayPicker
+                        if !dayChanges.isEmpty { changesCard }
                         if selected == nil {
                             ContentUnavailableView("Izvēlies grupu", systemImage: "person.2", description: Text("Šajā nedēļā saglabātā grupa nav atrasta."))
                         } else if lessons.isEmpty {
                             ContentUnavailableView("Brīva diena.", systemImage: "sun.max", description: Text("Šajā sarakstā šai dienai nav stundu."))
                         } else {
                             daySummary
-                            TimelineView(.periodic(from: .now, by: 60)) { context in
+                            TimelineView(.periodic(from: .now, by: 30)) { context in
                                 LazyVStack(spacing: 8) {
+                                    nowBanner(now: context.date)
                                     ForEach(lessons) { lesson in
                                         lessonCard(lesson, now: context.date)
                                     }
@@ -126,6 +164,11 @@ struct ContentView: View {
                         }
                     }
                 }.padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 20)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(DragGesture(minimumDistance: 40).onEnded { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                        move(by: value.translation.width < 0 ? 1 : -1)
+                    })
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Stundas")
@@ -200,11 +243,12 @@ struct ContentView: View {
                     VStack(spacing: 5) {
                         Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index]).font(.caption.weight(.medium))
                         Text("\(SchoolDate.calendar.component(.day, from: date))").font(.title3.weight(.semibold))
+                        Circle().fill(changes(ofDay: index).isEmpty ? Color.clear : orange).frame(width: 5, height: 5)
                     }
-                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .frame(maxWidth: .infinity).padding(.top, 10).padding(.bottom, 6)
                     .background(day == index ? Color.primary : surface, in: RoundedRectangle(cornerRadius: 16))
                     .foregroundStyle(day == index ? Color(.systemBackground) : Color.primary)
-                }.buttonStyle(.plain).accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.short(date))")
+                }.buttonStyle(.plain).accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.short(date))\(changes(ofDay: index).isEmpty ? "" : ", ir izmaiņas")")
                     .accessibilityAddTraits(day == index ? .isSelected : [])
             }
         }
@@ -228,7 +272,9 @@ struct ContentView: View {
             : slots.contains { $0.contains(now) }
         let inBreak = !active && lesson.start.map { $0 <= now } == true && lesson.end.map { $0 > now } == true
         let periodText = lesson.durationPeriods > 1 ? "\(lesson.period)–\(lesson.period + lesson.durationPeriods - 1)" : "\(lesson.period)"
-        return HStack(alignment: .top, spacing: 16) {
+        let changed = change(for: lesson)
+        let accent = changed != nil ? orange : SubjectColor.color(for: lesson.subject)
+        return HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(lesson.start.map(SchoolDate.time) ?? "—")
                     .font(.system(size: 18, weight: .semibold)).monospacedDigit()
@@ -237,10 +283,20 @@ struct ContentView: View {
                 if active { Circle().fill(blue).frame(width: 6, height: 6).padding(.top, 8) }
             }.frame(width: 56, alignment: .leading)
             VStack(alignment: .leading, spacing: 9) {
-                Text(active ? "TAGAD · \(periodText). STUNDA" : (inBreak ? "STARPBRĪDIS" : "\(periodText). STUNDA"))
-                    .font(.system(size: 9, weight: .semibold)).tracking(1.2)
-                    .foregroundStyle(active ? blue : Color.secondary)
+                HStack(spacing: 6) {
+                    Text(active ? "TAGAD · \(periodText). STUNDA" : (inBreak ? "STARPBRĪDIS" : "\(periodText). STUNDA"))
+                        .font(.system(size: 9, weight: .semibold)).tracking(1.2)
+                        .foregroundStyle(active ? blue : Color.secondary)
+                    if let changed = changed {
+                        Text(changed.isCancelled ? "NENOTIEK" : "IZMAIŅA")
+                            .font(.system(size: 9, weight: .bold)).tracking(1)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(orange.opacity(0.16), in: Capsule()).foregroundStyle(orange)
+                    }
+                }
                 Text(lesson.subject).font(.system(size: 18, weight: .semibold)).tracking(-0.3)
+                    .strikethrough(changed?.isCancelled == true)
+                    .foregroundStyle(changed?.isCancelled == true ? Color.secondary : Color.primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !lesson.teacher.isEmpty { Text(lesson.teacher).font(.caption).foregroundStyle(.secondary) }
                 HStack(spacing: 8) {
@@ -252,20 +308,87 @@ struct ContentView: View {
                         Text(lesson.subgroup).font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                if let changed = changed {
+                    Text(changed.text).font(.caption).foregroundStyle(orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if lesson.start == nil || lesson.end == nil {
                     Text("Precizē laiku skolas sarakstā.").font(.caption).foregroundStyle(.orange)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(16)
+        .padding(.vertical, 14).padding(.leading, 20).padding(.trailing, 16)
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2).fill(accent).frame(width: 4).padding(.vertical, 14).padding(.leading, 8)
+        }
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(active ? blue.opacity(0.5) : Color.clear, lineWidth: 1))
+        .opacity(lesson.end.map { $0 < now } == true && SchoolDate.calendar.isDateInToday(selectedDate) ? 0.55 : 1)
+    }
+
+    private var changesCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Stundu izmaiņas · \(dayChanges.count)", systemImage: "arrow.triangle.2.circlepath")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(orange)
+            ForEach(dayChanges) { entry in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(entry.periodText).font(.caption.weight(.bold)).monospacedDigit()
+                        .frame(width: 44, alignment: .leading)
+                    Text(entry.text).font(.caption).fixedSize(horizontal: false, vertical: true)
+
+                }
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(orange.opacity(0.35), lineWidth: 1))
+    }
+
+    /// "Now" or "next" summary for today, with progress through the current lesson.
+    @ViewBuilder private func nowBanner(now: Date) -> some View {
+        if SchoolDate.calendar.isDate(selectedDate, inSameDayAs: now) {
+            let timed = lessons.filter { $0.start != nil && $0.end != nil && !$0.isLunch }
+            if let current = timed.first(where: { $0.start! <= now && now < $0.end! }) {
+                let total = current.end!.timeIntervalSince(current.start!)
+                let left = Int(ceil(current.end!.timeIntervalSince(now) / 60))
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Tagad").font(.caption.weight(.semibold)).foregroundStyle(blue)
+                        Spacer()
+                        Text("vēl \(left) min").font(.caption.weight(.medium)).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    Text(current.subject).font(.headline).lineLimit(1)
+                    ProgressView(value: min(1, max(0, now.timeIntervalSince(current.start!) / total))).tint(blue)
+                }
+                .padding(14).background(blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+            } else if let next = timed.first(where: { $0.start! > now }) {
+                let mins = Int(ceil(next.start!.timeIntervalSince(now) / 60))
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Nākamā").font(.caption.weight(.semibold)).foregroundStyle(blue)
+                        Text(next.subject).font(.headline).lineLimit(1)
+                    }
+                    Spacer()
+                    Text(mins < 60 ? "pēc \(mins) min" : "plkst. \(SchoolDate.time(next.start!))")
+                        .font(.subheadline.weight(.semibold)).monospacedDigit()
+                }
+                .padding(14).background(blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+            } else if let end = timed.compactMap(\.end).max(), end <= now {
+                Label("Šodienas stundas beigušās", systemImage: "checkmark.circle")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                    .background(surface, in: RoundedRectangle(cornerRadius: 18))
+            }
+        }
     }
 
     private func footer(_ schedule: SchoolSchedule) -> some View {
         VStack(spacing: 8) {
             Text("Atjaunots \(SchoolDate.short(schedule.fetchedAt)) plkst. \(SchoolDate.time(schedule.fetchedAt))")
                 .font(.caption2).foregroundStyle(.secondary)
+            if model.changesFailed {
+                Text("Stundu izmaiņas neizdevās ielādēt.").font(.caption2).foregroundStyle(orange)
+            }
             Link("Skatīt EduPage ↗", destination: URL(string: "https://valteh.edupage.org/timetable/view.php")!)
                 .font(.caption)
         }.frame(maxWidth: .infinity).padding(.top, 8)
@@ -302,6 +425,21 @@ struct ContentView: View {
                     }))
                 } header: { Text("\(dayTitle), \(fullDate)") } footer: {
                     Text("Saīsinātie laiki attiecas tikai uz izvēlēto datumu. Ieslēdz, ja skola šai dienai ir noteikusi pirmssvētku sarakstu.")
+                }
+                Section {
+                    Toggle("Paziņot par stundu izmaiņām", isOn: Binding(get: { notifyChanges }, set: { on in
+                        if !on { notifyChanges = false; return }
+                        Task {
+                            let allowed = await ChangeNotifier.requestPermission()
+                            notifyChanges = allowed
+                            if allowed {
+                                ChangeNotifier.scheduleBackgroundRefresh()
+                                await ChangeNotifier.check()
+                            }
+                        }
+                    }))
+                } header: { Text("Paziņojumi") } footer: {
+                    Text("Paziņo par jaunām izmaiņām tavai grupai šodien un nākamajā mācību dienā. iOS pats izvēlas, cik bieži pārbaudīt fonā; aplikāciju atverot, pārbaude notiek uzreiz. Ja paziņojumi nenāk, Iestatījumos ieslēdz “Fona atjaunināšana”.")
                 }
                 Section("Sākuma ekrāna logrīks") {
                     Text("Turi nospiestu sākuma ekrānu un pievieno “Stundu Saraksts”. Grupu izvēlies logrīka iestatījumos.")

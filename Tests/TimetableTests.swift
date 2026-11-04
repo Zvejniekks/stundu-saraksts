@@ -228,4 +228,31 @@ final class TimetableTests: XCTestCase {
         XCTAssertEqual(source.lessons.count, 26)
     }
 
+
+    func testSubstitutionsForGroup31() throws {
+        let url = Bundle.module.url(forResource: "substitutions-2026-11-05", withExtension: "html", subdirectory: "Fixtures")!
+        let day = SubstitutionParser.parse(html: try String(contentsOf: url, encoding: .utf8), date: "2026-11-05")
+        XCTAssertGreaterThan(day.entries.count, 5)
+        let group = SchoolGroup(id: "-257", name: "2.k. 31.grupa", short: "31.grupa")
+        let own = day.entries(for: group)
+        XCTAssertEqual(own.count, 1)
+        XCTAssertEqual(own[0].firstPeriod, 5)
+        XCTAssertEqual(own[0].lastPeriod, 5)
+        XCTAssertTrue(own[0].text.contains("Uškāns Kaspars"))
+        XCTAssertFalse(own[0].isCancelled)
+        let range = day.entries.first { $0.firstPeriod == 8 }
+        XCTAssertEqual(range?.lastPeriod, 9)
+        XCTAssertTrue(day.entries.contains { $0.isCancelled })
+        XCTAssertTrue(day.entries(for: SchoolGroup(id: "x", name: "2.k. 3.grupa", short: "3.grupa")).isEmpty)
+    }
+    func testSubstitutionCoversLessonPeriods() {
+        let entry = SubstitutionEntry(group: "g", firstPeriod: 5, lastPeriod: 6, text: "t", kind: "change")
+        func lesson(_ p: Int, _ d: Int = 1) -> SchoolLesson {
+            SchoolLesson(id: "\(p)", groupID: "g", day: 0, period: p, durationPeriods: d, subject: "", teacher: "", room: "", subgroup: "", start: nil, end: nil)
+        }
+        XCTAssertTrue(entry.covers(lesson(5)))
+        XCTAssertTrue(entry.covers(lesson(4, 2)))
+        XCTAssertFalse(entry.covers(lesson(7)))
+        XCTAssertEqual(entry.periodText, "5.–6.")
+    }
 }

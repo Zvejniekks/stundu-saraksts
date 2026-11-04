@@ -17,9 +17,13 @@ targets:
       path: StunduSaraksts/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "0.9"
-        CFBundleVersion: "9"
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "10"
         UILaunchScreen: {}
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.toms.stundusaraksts.changes
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIApplicationSceneManifest:
@@ -39,8 +43,8 @@ targets:
       path: StunduWidget/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "0.9"
-        CFBundleVersion: "9"
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "10"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

@@ -213,14 +213,17 @@ final class EduPageClient {
         }
         token = String(html[range])
     }
-    private func rpc(_ path: String, args: [Any]) async throws -> [String: Any] {
+    func rawRPC(_ path: String, args: [Any]) async throws -> Any? {
         try await bootstrap()
         var request = URLRequest(url: URL(string: base + path)!)
         request.httpMethod = "POST"
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["__args": args, "__gsh": token])
         let root = try JSONSerialization.jsonObject(with: await data(request)) as? [String: Any]
-        guard let result = root?["r"] as? [String: Any] else {
+        return root?["r"]
+    }
+    private func rpc(_ path: String, args: [Any]) async throws -> [String: Any] {
+        guard let result = try await rawRPC(path, args: args) as? [String: Any] else {
             throw ScheduleError.message("EduPage noraidīja datu pieprasījumu. Atsvaidzini sarakstu.")
         }
         return result
