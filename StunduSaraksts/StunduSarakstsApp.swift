@@ -6,5 +6,9 @@ struct StunduSarakstsApp: App {
         WindowGroup {
             ContentView()
         }
+        .backgroundTask(.appRefresh(ChangeNotifier.taskID)) {
+            ChangeNotifier.scheduleBackgroundRefresh()
+            await ChangeNotifier.check()
+        }
     }
 }

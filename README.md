@@ -1,4 +1,17 @@
-# Stundu Saraksts · 0.9
+# Stundu Saraksts · 1.0
+
+## Jaunums 1.0
+
+**Stundu izmaiņas.** Aplikācija ielādē EduPage aizvietošanas sarakstu tavai grupai. Izvēlētās dienas izmaiņas redzamas oranžā kartītē virs stundām, mainītā stunda ir atzīmēta ar “IZMAIŅA”, un atceltā stunda ir pārsvītrota ar “NENOTIEK”. Dienu pogās oranžs punkts norāda, ka tajā dienā ir izmaiņas.
+
+**Izlabots saraksts.** Izmaiņas tiek iestrādātas pašās stundās: kartītē redzams jaunais priekšmets, skolotājs un kabinets, bet vecās vērtības ir pārsvītrotas zem tām. Atceltās stundas ir blāvākas, un tās netiek rādītas kā “Nākamā”.
+
+**Izmaiņas logrīkos.** Visi trīs logrīki ņem vērā izmaiņas. Mainītās stundas ir oranžas, atceltās pārsvītrotas, un apakšā redzams, piemēram, “Šodien 2 izmaiņas”. Logrīks pārbauda izmaiņas ik pēc 30 minūtēm (cik bieži tieši, nosaka iOS).
+
+**Paziņojumi.** Iestatījumos ieslēdz “Paziņot par stundu izmaiņām”. Aplikācija pārbauda šodienu un nākamo mācību dienu, kad to atver un iOS fona atjaunināšanas laikā, un paziņo tikai par jaunām izmaiņām. Cik bieži notiek fona pārbaude, izlemj iOS.
+
+**Dizains.** Augšā liels dienas nosaukums ar datumu, izvēlētā diena ir zila, šodiena iezīmēta. Zem dienām ir stundu skaits un cik no tām mainītas. Kabinets ir krāsainā zīmītē. Šodienai augšā redzams “Tagad” ar atlikušajām minūtēm un progresa joslu vai “Nākamā” ar laiku līdz sākumam. Katram priekšmetam ir sava krāsa, beigušās stundas ir blāvākas, un dienas var pārslēgt, pavelkot pa kreisi vai pa labi.
+
 
 ## Jaunums 0.9
 
@@ -26,7 +39,7 @@ Pusdienas ir izņemtas no visiem trim logrīkiem. Pašā aplikācijā pusdienas 
 
 ## Atjaunināšana
 
-Izpako `StunduSaraksts-v0.9.zip`, GitHub augšupielādē mapes `StunduSaraksts`, `Shared`, `StunduWidget`, `Tests` un `project.yml`. GitHub Actions uzbūvē IPA. Lejupielādē [jaunāko IPA](https://github.com/Zvejniekks/stundu-saraksts/releases/latest/download/StunduSaraksts.ipa) un instalē AltStore ar saglabātiem App Extensions. Atver aplikāciju pēc instalēšanas; ja logrīks nerāda izmaiņas, noņem un pievieno to vēlreiz.
+Izpako `StunduSaraksts-v1.0.zip`, GitHub augšupielādē mapes `StunduSaraksts`, `Shared`, `StunduWidget`, `Tests` un `project.yml`. GitHub Actions uzbūvē IPA. Lejupielādē [jaunāko IPA](https://github.com/Zvejniekks/stundu-saraksts/releases/latest/download/StunduSaraksts.ipa) un instalē AltStore ar saglabātiem App Extensions. Atver aplikāciju pēc instalēšanas; ja logrīks nerāda izmaiņas, noņem un pievieno to vēlreiz.
 
 Atjaunini `.github/workflows/build.yml` no ZIP, lai Actions pirms būvēšanas palaistu Swift testus.
 
