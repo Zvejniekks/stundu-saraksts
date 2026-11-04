@@ -101,3 +101,116 @@ enum SubstitutionAlerts {
         defaults.set(seen, forKey: key)
     }
 }
+
+/// What a substitution did to one lesson, with the values it replaced.
+struct LessonChange: Codable, Hashable {
+    let text: String
+    let cancelled: Bool
+    let previousSubject: String?
+    let previousTeacher: String?
+    let previousRoom: String?
+}
+
+/// The new values EduPage writes as "(old) ➔ new" inside a change line.
+struct SubstitutionCorrection: Equatable {
+    var subgroup: String?
+    var subject: String?
+    var teacher: String?
+    var room: String?
+    var cancelled = false
+}
+
+extension SubstitutionEntry {
+    var correction: SubstitutionCorrection {
+        var result = SubstitutionCorrection(cancelled: isCancelled)
+        var head = text, detail = ""
+        if let r = text.range(of: " - ") { head = String(text[..<r.lowerBound]); detail = String(text[r.upperBound...]) }
+        // "2.grupa: Subject" means only that subgroup is affected.
+        if let r = head.range(of: #"^\s*\d+\.\s*grupa:\s*"#, options: .regularExpression) {
+            result.subgroup = head[r].replacingOccurrences(of: ":", with: "").trimmingCharacters(in: .whitespaces)
+            head = String(head[r.upperBound...])
+        }
+        if let arrow = head.range(of: "➔") {
+            result.subject = clean(String(head[arrow.upperBound...]))
+        }
+        func value(after label: String) -> String? {
+            guard let r = detail.range(of: label) else { return nil }
+            var rest = String(detail[r.upperBound...])
+            if let arrow = rest.range(of: "➔") , !rest[..<arrow.lowerBound].contains(",") {
+                rest = String(rest[arrow.upperBound...])
+            }
+            let v = rest.components(separatedBy: ", ").first.map(clean) ?? ""
+            return v.isEmpty ? nil : v
+        }
+        result.teacher = value(after: "Aizvietošana:") ?? value(after: "Skolotājs:")
+        result.room = value(after: "Mainīt kabinetu:") ?? value(after: "Kabinets:")
+        return result
+    }
+    private func clean(_ s: String) -> String {
+        s.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "()")))
+    }
+}
+
+extension SchoolLesson {
+    /// The lesson as it actually happens on its day, after that day's substitutions.
+    func applying(_ entries: [SubstitutionEntry]) -> SchoolLesson {
+        guard let entry = entries.first(where: { $0.firstPeriod != nil && $0.covers(self) && applies($0) }) else { return self }
+        let fix = entry.correction
+        var copy = SchoolLesson(id: id, groupID: groupID, day: day, period: period, durationPeriods: durationPeriods,
+                                subject: fix.subject ?? subject, teacher: fix.teacher ?? teacher, room: fix.room ?? room,
+                                subgroup: subgroup, start: start, end: end)
+        copy.change = LessonChange(text: entry.text, cancelled: fix.cancelled,
+                                   previousSubject: fix.subject.flatMap { $0 == subject ? nil : subject },
+                                   previousTeacher: fix.teacher.flatMap { $0 == teacher || teacher.isEmpty ? nil : teacher },
+                                   previousRoom: fix.room.flatMap { $0 == room || room.isEmpty ? nil : room })
+        return copy
+    }
+    private func applies(_ entry: SubstitutionEntry) -> Bool {
+        guard let only = entry.correction.subgroup, !subgroup.isEmpty else { return true }
+        let a = only.replacingOccurrences(of: " ", with: "").lowercased()
+        return subgroup.replacingOccurrences(of: " ", with: "").lowercased().contains(a)
+    }
+}
+
+extension SchoolSchedule {
+    /// Replaces lessons with their changed versions; `changes` is keyed by yyyy-MM-dd.
+    func applyingChanges(_ changes: [String: SubstitutionDay], group: SchoolGroup?) -> SchoolSchedule {
+        guard !changes.isEmpty, let group = group else { return self }
+        let monday = SchoolDate.monday(week.from)
+        let updated = lessons.map { lesson -> SchoolLesson in
+            guard lesson.groupID == group.id else { return lesson }
+            let date = SchoolDate.calendar.date(byAdding: .day, value: lesson.day, to: monday)!
+            return lesson.applying(changes[SchoolDate.dateKey(date)]?.entries(for: group) ?? [])
+        }
+        return SchoolSchedule(week: week, groups: groups, lessons: updated, fetchedAt: fetchedAt)
+    }
+}
+
+extension EduPageClient {
+    /// Changes for the school days of `week` from today on. Missing days failed to load.
+    func substitutions(for week: PublishedWeek, now: Date = Date()) async -> [String: SubstitutionDay] {
+        let c = SchoolDate.calendar, today = c.startOfDay(for: now)
+        var result: [String: SubstitutionDay] = [:]
+        for offset in 0..<5 {
+            guard let date = c.date(byAdding: .day, value: offset, to: SchoolDate.monday(week.from)), date >= today else { continue }
+            if let day = try? await substitutions(on: date) { result[day.date] = day }
+        }
+        return result
+    }
+}
+
+enum SubstitutionCache {
+    private static var url: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("substitutions-v1.json")
+    }
+    static func read() -> [String: SubstitutionDay] {
+        guard let bytes = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: SubstitutionDay].self, from: bytes)) ?? [:]
+    }
+    static func save(_ days: [String: SubstitutionDay]) {
+        let cutoff = SchoolDate.dateKey(Date().addingTimeInterval(-7 * 86400))
+        let merged = read().merging(days) { $1 }.filter { $0.key >= cutoff }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(merged).write(to: url, options: .atomic)
+    }
+}

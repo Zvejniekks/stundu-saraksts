@@ -255,4 +255,36 @@ final class TimetableTests: XCTestCase {
         XCTAssertFalse(entry.covers(lesson(7)))
         XCTAssertEqual(entry.periodText, "5.–6.")
     }
+    func testCorrectionReadsNewSubjectTeacherAndRoom() {
+        let swap = SubstitutionEntry(group: "g", firstPeriod: 5, lastPeriod: 5,
+            text: "(Iniciatīva un uzņēmējdarb. (1.l.)) ➔ Programmas izstrādes process - Aizvietošana: (Kobiaka Ilze) ➔ Uškāns Kaspars, Mainīt kabinetu: (104.) ➔ V115., Priekšmeta maiņa", kind: "change")
+        XCTAssertEqual(swap.correction, SubstitutionCorrection(subgroup: nil, subject: "Programmas izstrādes process",
+                                                               teacher: "Uškāns Kaspars", room: "V115.", cancelled: false))
+        let room = SubstitutionEntry(group: "g", firstPeriod: 6, lastPeriod: 9,
+            text: "Lokšņu liekšana un ciršana - Skolotājs: Beriņš Roberts, Mainīt kabinetu: (225.) ➔ Metālapstr. lab., Kabinetas maiņa", kind: "change")
+        XCTAssertNil(room.correction.subject)
+        XCTAssertEqual(room.correction.room, "Metālapstr. lab.")
+        XCTAssertEqual(room.correction.teacher, "Beriņš Roberts")
+        let off = SubstitutionEntry(group: "g", firstPeriod: 5, lastPeriod: 6,
+            text: "1.grupa: Dabaszinības - (Ārne Dace), (212.), 1.pusgr. stunda nenotiek", kind: "change")
+        XCTAssertTrue(off.correction.cancelled)
+        XCTAssertEqual(off.correction.subgroup, "1.grupa")
+        XCTAssertNil(off.correction.teacher)
+    }
+    func testApplyingChangesUpdatesLesson() {
+        let lesson = SchoolLesson(id: "a", groupID: "g", day: 0, period: 5, durationPeriods: 1, subject: "Iniciatīva",
+                                  teacher: "Kobiaka Ilze", room: "104.", subgroup: "", start: nil, end: nil)
+        let entry = SubstitutionEntry(group: "g", firstPeriod: 5, lastPeriod: 5,
+            text: "(Iniciatīva) ➔ Programmēšana - Aizvietošana: (Kobiaka Ilze) ➔ Uškāns Kaspars, Mainīt kabinetu: (104.) ➔ V115.", kind: "change")
+        let fixed = lesson.applying([entry])
+        XCTAssertEqual(fixed.subject, "Programmēšana")
+        XCTAssertEqual(fixed.teacher, "Uškāns Kaspars")
+        XCTAssertEqual(fixed.room, "V115.")
+        XCTAssertEqual(fixed.change?.previousSubject, "Iniciatīva")
+        XCTAssertEqual(fixed.change?.previousRoom, "104.")
+        XCTAssertNil(lesson.applying([]).change)
+        let other = SchoolLesson(id: "b", groupID: "g", day: 0, period: 7, durationPeriods: 1, subject: "X",
+                                 teacher: "", room: "", subgroup: "", start: nil, end: nil)
+        XCTAssertNil(other.applying([entry]).change)
+    }
 }

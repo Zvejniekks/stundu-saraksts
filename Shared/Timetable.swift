@@ -26,6 +26,8 @@ struct SchoolLesson: Codable, Identifiable {
     let subgroup: String
     let start: Date?
     let end: Date?
+    /// Set when the day's substitutions changed this lesson; fields above already show the new values.
+    var change: LessonChange? = nil
     var time: String {
         "\(start.map(SchoolDate.time) ?? "?")–\(end.map(SchoolDate.time) ?? "?")"
     }

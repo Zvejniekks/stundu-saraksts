@@ -11,26 +11,27 @@ final class ScheduleModel: ObservableObject {
     @Published private(set) var currentGroup: SchoolGroup?
     @Published private(set) var days: [Int: [SchoolLesson]] = [:]
     @Published private(set) var periods: [String: [LessonPeriod]] = [:]
-    @Published private(set) var changes: [String: SubstitutionDay] = [:]
+    @Published private(set) var changes: [String: SubstitutionDay] = SubstitutionCache.read()
     @Published private(set) var changesFailed = false
     var pickedWeekID: String?
+    private var lastPrepare: (group: String, shortened: Set<String>)?
 
     /// Changes are published per day; load the visible week's school days from today on.
     func loadChanges(for week: PublishedWeek) async {
         let c = SchoolDate.calendar, today = c.startOfDay(for: Date())
-        let dates = (0..<5).compactMap { c.date(byAdding: .day, value: $0, to: SchoolDate.monday(week.from)) }
-            .filter { $0 >= today }
-        guard !dates.isEmpty else { return }
-        let client = EduPageClient()
-        var failed = false
-        for date in dates {
-            if let day = try? await client.substitutions(on: date) { changes[day.date] = day } else { failed = true }
-        }
-        changesFailed = failed
+        let expected = (0..<5).compactMap { c.date(byAdding: .day, value: $0, to: SchoolDate.monday(week.from)) }
+            .filter { $0 >= today }.count
+        guard expected > 0 else { return }
+        let loaded = await EduPageClient().substitutions(for: week)
+        changes.merge(loaded) { $1 }
+        changesFailed = loaded.count < expected
+        SubstitutionCache.save(loaded)
+        if let last = lastPrepare { prepare(group: last.group, shortenedDates: last.shortened) }
     }
 
     // Rebuild on data/group/settings changes only, never when a day button is tapped.
     func prepare(group: String, shortenedDates: Set<String>) {
+        lastPrepare = (group, shortenedDates)
         guard let source = schedule else {
             displayed = nil; currentGroup = nil; days = [:]; periods = [:]; return
         }
@@ -44,7 +45,8 @@ final class ScheduleModel: ObservableObject {
             let date = SchoolDate.calendar.date(byAdding: .day, value: lesson.day, to: SchoolDate.monday(source.week.from))!
             let shortened = shortenedDates.contains(BellTimes.dateKey(date))
             let parts = lesson.splitPeriods(on: date, shortened: shortened)
-            for part in parts {
+            let dayChanges = changes[SchoolDate.dateKey(date)]?.entries(for: selected) ?? []
+            for part in parts.map({ $0.applying(dayChanges) }) {
                 cards.append(part)
                 slots[part.id] = part.periodTimes(on: date, shortened: shortened)
 
@@ -117,9 +119,12 @@ struct ContentView: View {
         model.changes[SchoolDate.dateKey(date(ofDay: index))]?.entries(for: selected) ?? []
     }
     private var dayChanges: [SubstitutionEntry] { changes(ofDay: day) }
-    private func change(for lesson: SchoolLesson) -> SubstitutionEntry? {
-        dayChanges.first { $0.covers(lesson) && $0.firstPeriod != nil }
+    /// Changes that did not land on a lesson card (added lessons, whole-day notes).
+    private var looseChanges: [SubstitutionEntry] {
+        let texts = Set(lessons.compactMap { $0.change?.text })
+        return dayChanges.filter { !texts.contains($0.text) }
     }
+    private var isToday: Bool { SchoolDate.calendar.isDateInToday(selectedDate) }
     private func move(by offset: Int) {
         let target = day + offset
         guard (0..<5).contains(target) else { return }
@@ -139,7 +144,7 @@ struct ContentView: View {
                     if let schedule = schedule {
                         weekPicker(schedule)
                         dayPicker
-                        if !dayChanges.isEmpty { changesCard }
+                        if !looseChanges.isEmpty { changesCard }
                         if selected == nil {
                             ContentUnavailableView("Izvēlies grupu", systemImage: "person.2", description: Text("Šajā nedēļā saglabātā grupa nav atrasta."))
                         } else if lessons.isEmpty {
@@ -214,11 +219,12 @@ struct ContentView: View {
 
     private func weekPicker(_ schedule: SchoolSchedule) -> some View {
         HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(fullDate).font(.subheadline.weight(.semibold))
-                if SchoolDate.calendar.isDate(selectedDate, inSameDayAs: Date()) {
-                    Text("Šodien").font(.caption2).foregroundStyle(blue)
-                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(dayTitle).font(.title2.weight(.bold)).tracking(-0.5)
+                HStack(spacing: 6) {
+                    Text(fullDate).foregroundStyle(.secondary)
+                    if isToday { Text("· Šodien").foregroundStyle(blue) }
+                }.font(.subheadline.weight(.medium))
             }
             Spacer(minLength: 4)
             Menu {
@@ -229,7 +235,8 @@ struct ContentView: View {
                 HStack(spacing: 4) {
                     Text("\(SchoolDate.short(schedule.week.from))–\(SchoolDate.short(schedule.week.until.addingTimeInterval(-1)))")
                     Image(systemName: "chevron.down").font(.caption2)
-                }.font(.caption.weight(.medium)).padding(.vertical, 10)
+                }.font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(surface, in: Capsule())
             }.disabled(model.busy || model.weeks.isEmpty)
                 .accessibilityLabel("Izvēlēties nedēļu")
         }
@@ -240,14 +247,18 @@ struct ContentView: View {
             ForEach(0..<5) { index in
                 let date = SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
                 Button { withAnimation(.easeInOut(duration: 0.18)) { day = index } } label: {
-                    VStack(spacing: 5) {
+                    let today = SchoolDate.calendar.isDateInToday(date)
+                    VStack(spacing: 4) {
                         Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index]).font(.caption.weight(.medium))
+                            .opacity(day == index ? 0.8 : 0.6)
                         Text("\(SchoolDate.calendar.component(.day, from: date))").font(.title3.weight(.semibold))
+                            .foregroundStyle(day != index && today ? blue : (day == index ? Color.white : Color.primary))
                         Circle().fill(changes(ofDay: index).isEmpty ? Color.clear : orange).frame(width: 5, height: 5)
                     }
                     .frame(maxWidth: .infinity).padding(.top, 10).padding(.bottom, 6)
-                    .background(day == index ? Color.primary : surface, in: RoundedRectangle(cornerRadius: 16))
-                    .foregroundStyle(day == index ? Color(.systemBackground) : Color.primary)
+                    .background(day == index ? blue : surface, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(today && day != index ? blue.opacity(0.4) : .clear, lineWidth: 1))
+                    .foregroundStyle(day == index ? Color.white : Color.primary)
                 }.buttonStyle(.plain).accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.short(date))\(changes(ofDay: index).isEmpty ? "" : ", ir izmaiņas")")
                     .accessibilityAddTraits(day == index ? .isSelected : [])
             }
@@ -255,8 +266,15 @@ struct ContentView: View {
     }
 
     private var daySummary: some View {
-        HStack {
-            Text(dayTitle).font(.headline)
+        let real = lessons.filter { !$0.isLunch }
+        let changed = real.filter { $0.change != nil }.count
+        return HStack(spacing: 8) {
+            Text("\(real.count) \(real.count == 1 ? "stunda" : "stundas")").font(.subheadline.weight(.semibold))
+            if changed > 0 {
+                Text("\(changed) \(changed == 1 ? "mainīta" : "mainītas")")
+                    .font(.caption.weight(.semibold)).foregroundStyle(orange)
+                    .padding(.horizontal, 7).padding(.vertical, 2).background(orange.opacity(0.14), in: Capsule())
+            }
             if isShortened { Text("Saīsinātā diena").font(.caption2).foregroundStyle(blue) }
             Spacer()
             if let end = lessons.compactMap(\.end).max() {
@@ -272,7 +290,8 @@ struct ContentView: View {
             : slots.contains { $0.contains(now) }
         let inBreak = !active && lesson.start.map { $0 <= now } == true && lesson.end.map { $0 > now } == true
         let periodText = lesson.durationPeriods > 1 ? "\(lesson.period)–\(lesson.period + lesson.durationPeriods - 1)" : "\(lesson.period)"
-        let changed = change(for: lesson)
+        let changed = lesson.change
+        let cancelled = changed?.cancelled == true
         let accent = changed != nil ? orange : SubjectColor.color(for: lesson.subject)
         return HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
@@ -288,27 +307,42 @@ struct ContentView: View {
                         .font(.system(size: 9, weight: .semibold)).tracking(1.2)
                         .foregroundStyle(active ? blue : Color.secondary)
                     if let changed = changed {
-                        Text(changed.isCancelled ? "NENOTIEK" : "IZMAIŅA")
+                        Text(changed.cancelled ? "NENOTIEK" : "IZMAIŅA")
                             .font(.system(size: 9, weight: .bold)).tracking(1)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(orange.opacity(0.16), in: Capsule()).foregroundStyle(orange)
                     }
                 }
                 Text(lesson.subject).font(.system(size: 18, weight: .semibold)).tracking(-0.3)
-                    .strikethrough(changed?.isCancelled == true)
-                    .foregroundStyle(changed?.isCancelled == true ? Color.secondary : Color.primary)
+                    .strikethrough(cancelled)
+                    .foregroundStyle(cancelled ? Color.secondary : Color.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                if !lesson.teacher.isEmpty { Text(lesson.teacher).font(.caption).foregroundStyle(.secondary) }
+                if let old = changed?.previousSubject {
+                    Text("Bija: \(old)").font(.caption).strikethrough().foregroundStyle(.secondary)
+                }
+                if !lesson.teacher.isEmpty {
+                    HStack(spacing: 4) {
+                        Text(lesson.teacher).foregroundStyle(changed?.previousTeacher != nil ? orange : Color.secondary)
+                        if let old = changed?.previousTeacher { Text(old).strikethrough().foregroundStyle(.tertiary) }
+                    }.font(.caption)
+                }
                 HStack(spacing: 8) {
                     if !lesson.room.isEmpty {
+                        let moved = changed?.previousRoom != nil
                         Label(lesson.room, systemImage: "door.left.hand.open")
-                            .font(.caption.weight(.medium)).foregroundStyle(blue)
+                            .font(.caption.weight(.semibold)).foregroundStyle(moved ? orange : blue)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background((moved ? orange : blue).opacity(0.1), in: Capsule())
+                        if let old = changed?.previousRoom {
+                            Text(old).font(.caption).strikethrough().foregroundStyle(.tertiary)
+                        }
                     }
                     if !lesson.subgroup.isEmpty {
                         Text(lesson.subgroup).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if let changed = changed {
+                if let changed = changed, !changed.cancelled, changed.previousSubject == nil,
+                   changed.previousTeacher == nil, changed.previousRoom == nil {
                     Text(changed.text).font(.caption).foregroundStyle(orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -323,14 +357,14 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 2).fill(accent).frame(width: 4).padding(.vertical, 14).padding(.leading, 8)
         }
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(active ? blue.opacity(0.5) : Color.clear, lineWidth: 1))
-        .opacity(lesson.end.map { $0 < now } == true && SchoolDate.calendar.isDateInToday(selectedDate) ? 0.55 : 1)
+        .opacity(cancelled || (lesson.end.map { $0 < now } == true && isToday) ? 0.55 : 1)
     }
 
     private var changesCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Stundu izmaiņas · \(dayChanges.count)", systemImage: "arrow.triangle.2.circlepath")
+            Label("Citas izmaiņas", systemImage: "arrow.triangle.2.circlepath")
                 .font(.subheadline.weight(.semibold)).foregroundStyle(orange)
-            ForEach(dayChanges) { entry in
+            ForEach(looseChanges) { entry in
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(entry.periodText).font(.caption.weight(.bold)).monospacedDigit()
                         .frame(width: 44, alignment: .leading)
@@ -347,7 +381,7 @@ struct ContentView: View {
     /// "Now" or "next" summary for today, with progress through the current lesson.
     @ViewBuilder private func nowBanner(now: Date) -> some View {
         if SchoolDate.calendar.isDate(selectedDate, inSameDayAs: now) {
-            let timed = lessons.filter { $0.start != nil && $0.end != nil && !$0.isLunch }
+            let timed = lessons.filter { $0.start != nil && $0.end != nil && !$0.isLunch && $0.change?.cancelled != true }
             if let current = timed.first(where: { $0.start! <= now && now < $0.end! }) {
                 let total = current.end!.timeIntervalSince(current.start!)
                 let left = Int(ceil(current.end!.timeIntervalSince(now) / 60))

@@ -27,7 +27,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
     }
     func snapshot(for configuration: GroupIntent, in context: Context) async -> ScheduleEntry {
         if let cache = ScheduleCache.read() {
-            return ScheduleEntry(date: Date(), group: configuration.group, schedule: WidgetSelection.prepare(cache, group: configuration.group, shortenedDates: configuration.shortenedDates), message: nil)
+            return ScheduleEntry(date: Date(), group: configuration.group, schedule: WidgetSelection.prepare(cache, group: configuration.group, shortenedDates: configuration.shortenedDates, changes: SubstitutionCache.read()), message: nil)
         }
         let loaded = await timeline(for: configuration, in: context)
         return loaded.entries.first ?? placeholder(in: context)
@@ -36,6 +36,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
         let now = Date()
         var schedule: SchoolSchedule?
         var message: String?
+        var changes = SubstitutionCache.read()
         do {
             let client = EduPageClient()
             let weeks = try await client.weeks()
@@ -43,6 +44,9 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             if let week = WidgetSelection.week(from: weeks, now: now) {
                 schedule = try await client.schedule(week: week)
                 if let schedule = schedule { try? ScheduleCache.save(schedule) }
+                let fresh = await client.substitutions(for: week, now: now)
+                changes.merge(fresh) { $1 }
+                SubstitutionCache.save(fresh)
             } else {
                 message = "Jaunais saraksts vēl nav publicēts"
             }
@@ -51,7 +55,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             schedule = cache
             message = schedule == nil ? "Neizdevās ielādēt. Atver aplikāciju." : "Bezsaistē · saglabātie dati"
         }
-        schedule = schedule.map { WidgetSelection.prepare($0, group: configuration.group, shortenedDates: configuration.shortenedDates) }
+        schedule = schedule.map { WidgetSelection.prepare($0, group: configuration.group, shortenedDates: configuration.shortenedDates, changes: changes) }
         var dates = [now]
         let nextDay = WidgetSelection.nextDaySwitch(after: now)
         if let schedule = schedule, let group = schedule.group(matching: configuration.group) {
@@ -64,7 +68,8 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             ScheduleEntry(date: $0, group: configuration.group, schedule: schedule, message: message)
         }
         // Reload at 17:00 too: on Friday the next day is in another week's data.
-        return Timeline(entries: entries, policy: .after(min(now.addingTimeInterval(3600), nextDay)))
+        // Changes are published during the day, so check every 30 minutes.
+        return Timeline(entries: entries, policy: .after(min(now.addingTimeInterval(1800), nextDay)))
     }
 }
 
@@ -83,6 +88,22 @@ struct ScheduleWidgetView: View {
         return WidgetSelection.day(schedule: schedule, groupID: group.id, now: entry.date)
     }
     private var dayRows: [SchoolLesson] { all.filter { $0.day == day } }
+    private let orange = Color(red: 0.95, green: 0.5, blue: 0.1)
+    /// Changes on the day the widget is about (today, or the next school day after 17:00).
+    private var changeCount: Int { dayRows.filter { $0.change != nil }.count }
+    private var changeDayLabel: String {
+        guard let monday = entry.schedule.map({ SchoolDate.monday($0.week.from) }),
+              let date = SchoolDate.calendar.date(byAdding: .day, value: day, to: monday) else { return "" }
+        if SchoolDate.calendar.isDate(date, inSameDayAs: entry.date) { return "Šodien" }
+        if SchoolDate.calendar.isDateInTomorrow(date) { return "Rīt" }
+        return SchoolDate.dayNames[day]
+    }
+    private var changeBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text("\(changeDayLabel) \(changeCount) \(changeCount == 1 ? "izmaiņa" : "izmaiņas")")
+        }.font(.system(size: 9, weight: .semibold)).foregroundStyle(orange).lineLimit(1)
+    }
     private var publication: String {
         guard let week = entry.schedule?.week else { return "" }
         let range = "\(SchoolDate.short(week.from))–\(SchoolDate.short(week.until.addingTimeInterval(-1)))"
@@ -120,7 +141,11 @@ struct ScheduleWidgetView: View {
     }
     private var publicationView: some View {
         HStack(spacing: 3) {
-            Text(publication)
+            if changeCount > 0 {
+                changeBadge
+            } else {
+                Text(publication)
+            }
             if entry.message != nil { Image(systemName: "wifi.slash") }
         }.font(.system(size: 9)).foregroundStyle(archived ? Color.orange : Color.secondary).lineLimit(1)
     }
@@ -129,11 +154,16 @@ struct ScheduleWidgetView: View {
             header(archived ? "Pārskats" : "Nākamā")
             if let lesson = next {
                 Text(lesson.start.map(SchoolDate.time) ?? "—")
-                    .font(.system(size: 29, weight: .bold)).tracking(-1).foregroundStyle(.blue)
+                    .font(.system(size: 29, weight: .bold)).tracking(-1)
+                    .foregroundStyle(lesson.change != nil ? orange : Color.blue)
                 Text(lesson.subject).font(.system(size: 15, weight: .semibold)).lineLimit(2).minimumScaleFactor(0.85)
                 HStack(spacing: 4) {
                     Text(String(SchoolDate.dayNames[lesson.day].prefix(2)) + ".")
-                    if !lesson.room.isEmpty { Text("· " + lesson.room) }
+                    if !lesson.room.isEmpty {
+                        Text("· " + lesson.room)
+                            .foregroundStyle(lesson.change?.previousRoom != nil ? orange : Color.secondary)
+                    }
+                    if lesson.change != nil { Text("· mainīta").foregroundStyle(orange) }
                 }.font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             } else {
                 Text("Nav nākamo stundu").font(.subheadline).foregroundStyle(.secondary)
@@ -165,14 +195,17 @@ struct ScheduleWidgetView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(SubjectDisplay.name(lesson.subject))
                         .font(.system(size: slots > 4 ? 10 : 12, weight: .semibold))
-                        .foregroundStyle(.primary).lineLimit(1)
+                        .strikethrough(lesson.change?.cancelled == true)
+                        .foregroundStyle(lesson.change == nil ? Color.primary : orange).lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 4) {
                         Text(lesson.start.map(SchoolDate.time) ?? "—")
-                            .monospacedDigit().foregroundStyle(.blue)
+                            .monospacedDigit().foregroundStyle(lesson.change == nil ? Color.blue : orange)
                         Spacer(minLength: 2)
-                        if !lesson.room.isEmpty {
-                            Text(lesson.room).foregroundStyle(.secondary).lineLimit(1)
+                        if lesson.change?.cancelled == true {
+                            Text("nenotiek").foregroundStyle(orange).lineLimit(1)
+                        } else if !lesson.room.isEmpty {
+                            Text(lesson.room).foregroundStyle(lesson.change?.previousRoom != nil ? orange : Color.secondary).lineLimit(1)
                         }
                     }.font(.system(size: slots > 4 ? 8 : 9, weight: .medium))
                 }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -218,12 +251,15 @@ struct ScheduleWidgetView: View {
                 ForEach(lessons) { lesson in
                     Text(compact(lesson.subject))
                         .font(.system(size: 9, weight: .medium)).lineLimit(2).minimumScaleFactor(0.6)
+                        .strikethrough(lesson.change?.cancelled == true)
                         .multilineTextAlignment(.center)
                         .accessibilityLabel("\(lesson.period). stunda, \(lesson.subject), \(lesson.room)")
                 }
             }
         }.padding(.horizontal, 2).frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(lessons.isEmpty ? Color.secondary.opacity(0.04) : Color.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 5))
+            .background(lessons.isEmpty ? Color.secondary.opacity(0.04)
+                        : (lessons.contains { $0.change != nil } ? orange.opacity(0.22) : Color.blue.opacity(0.10)),
+                        in: RoundedRectangle(cornerRadius: 5))
     }
     private func compact(_ subject: String) -> String {
         SubjectDisplay.name(subject)
