@@ -35,7 +35,9 @@ struct SubstitutionDay: Codable {
 enum SubstitutionParser {
     static func matches(_ header: String, group: SchoolGroup) -> Bool {
         let h = header.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let name = group.name.lowercased(), short = group.short.lowercased()
+        // EduPage names are not always tidy ("2.k. 17.grupa ", "2.k.12.grupa").
+        let name = group.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let short = group.short.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return h == name || h == short || (!short.isEmpty && h.hasSuffix(" " + short))
     }
 
