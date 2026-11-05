@@ -7,7 +7,11 @@ import BackgroundTasks
 enum ChangeNotifier {
     static let taskID = "com.toms.stundusaraksts.changes"
     static let enabledKey = "notifyChanges"
-    static var enabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+    static let newWeekKey = "notifyNewWeek"
+    private static let knownWeekKey = "knownLatestWeekStart"
+    static var changesEnabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+    static var newWeekEnabled: Bool { UserDefaults.standard.bool(forKey: newWeekKey) }
+    static var enabled: Bool { changesEnabled || newWeekEnabled }
 
     static func requestPermission() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
@@ -24,8 +28,38 @@ enum ChangeNotifier {
         return dates
     }
 
-    static func check() async {
-        guard enabled else { return }
+    /// Remember the newest published week without notifying (used when the toggle is switched on).
+    static func rememberLatestWeek(_ weeks: [PublishedWeek]) {
+        guard let latest = weeks.max(by: { $0.from < $1.from }) else { return }
+        UserDefaults.standard.set(SchoolDate.dateKey(latest.from), forKey: knownWeekKey)
+    }
+
+    /// Notifies once when EduPage publishes a week newer than any seen before.
+    static func checkNewWeek(_ known: [PublishedWeek]? = nil) async {
+        guard newWeekEnabled else { return }
+        let weeks: [PublishedWeek]
+        if let known = known { weeks = known } else {
+            guard let loaded = try? await EduPageClient().weeks() else { return }
+            weeks = loaded
+        }
+        guard let latest = weeks.max(by: { $0.from < $1.from }) else { return }
+        let key = SchoolDate.dateKey(latest.from)
+        guard let seen = UserDefaults.standard.string(forKey: knownWeekKey) else {
+            UserDefaults.standard.set(key, forKey: knownWeekKey); return
+        }
+        guard key > seen else { return }
+        UserDefaults.standard.set(key, forKey: knownWeekKey)
+        let content = UNMutableNotificationContent()
+        content.title = "Publicēts jauns stundu saraksts"
+        content.body = "Nedēļa \(SchoolDate.short(latest.from))–\(SchoolDate.short(latest.until.addingTimeInterval(-1))) jau ir pieejama. Atver, lai apskatītu."
+        content.sound = .default
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "new-week-\(key)", content: content, trigger: nil))
+    }
+
+    static func check(weeks: [PublishedWeek]? = nil) async {
+        await checkNewWeek(weeks)
+        guard changesEnabled else { return }
         let saved = UserDefaults.standard.string(forKey: "selectedGroup") ?? "31"
         guard let group = ScheduleCache.read()?.group(matching: saved) else { return }
         let client = EduPageClient()
