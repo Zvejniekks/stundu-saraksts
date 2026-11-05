@@ -1,4 +1,11 @@
-# Stundu Saraksts · 1.0
+# Stundu Saraksts · 1.1
+
+## Jaunums 1.1
+
+**Visa nedēļa.** Augšā ir pārslēgs “Diena / Visa nedēļa”. Nedēļas skatā redzamas visas piecas dienas vienā lapā: stundas numurs, sākuma laiks, priekšmets un kabinets. Dubultstundas ir apvienotas vienā rindā, izmaiņas ir oranžas, atceltās stundas pārsvītrotas, un šodiena ir iezīmēta zilā krāsā. Uzspiežot uz dienas nosaukuma, atveras tās dienas detalizētais skats.
+
+**Paziņojums par jaunu nedēļu.** Iestatījumos ieslēdz “Paziņot par jaunu nedēļu”. Kad skola EduPage publicē jaunas nedēļas sarakstu, atnāk paziņojums. Pārbaude notiek, kad aplikāciju atver un iOS fona atjaunināšanas laikā. Paziņojumi tagad parādās arī tad, ja aplikācija ir atvērta.
+
 
 ## Jaunums 1.0
 
