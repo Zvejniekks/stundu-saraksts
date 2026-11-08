@@ -19,6 +19,7 @@ struct ScheduleEntry: TimelineEntry {
     let group: String
     let schedule: SchoolSchedule?
     let message: String?
+    var lunch: [Int: String] = [:]
 }
 
 struct ScheduleProvider: AppIntentTimelineProvider {
@@ -27,7 +28,8 @@ struct ScheduleProvider: AppIntentTimelineProvider {
     }
     func snapshot(for configuration: GroupIntent, in context: Context) async -> ScheduleEntry {
         if let cache = ScheduleCache.read() {
-            return ScheduleEntry(date: Date(), group: configuration.group, schedule: WidgetSelection.prepare(cache, group: configuration.group, shortenedDates: configuration.shortenedDates, changes: SubstitutionCache.read()), message: nil)
+            return ScheduleEntry(date: Date(), group: configuration.group, schedule: WidgetSelection.prepare(cache, group: configuration.group, shortenedDates: configuration.shortenedDates, changes: SubstitutionCache.read()), message: nil,
+                                 lunch: WidgetSelection.lunchTimes(cache, group: configuration.group, shortenedDates: configuration.shortenedDates))
         }
         let loaded = await timeline(for: configuration, in: context)
         return loaded.entries.first ?? placeholder(in: context)
@@ -44,7 +46,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             if let week = WidgetSelection.week(from: weeks, now: now) {
                 schedule = try await client.schedule(week: week)
                 if let schedule = schedule { try? ScheduleCache.save(schedule) }
-                let fresh = await client.substitutions(for: week, now: now)
+                let fresh = await client.substitutions(for: week)
                 changes.merge(fresh) { $1 }
                 SubstitutionCache.save(fresh)
             } else {
@@ -55,6 +57,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             schedule = cache
             message = schedule == nil ? "Neizdevās ielādēt. Atver aplikāciju." : "Bezsaistē · saglabātie dati"
         }
+        let lunch = schedule.map { WidgetSelection.lunchTimes($0, group: configuration.group, shortenedDates: configuration.shortenedDates) } ?? [:]
         schedule = schedule.map { WidgetSelection.prepare($0, group: configuration.group, shortenedDates: configuration.shortenedDates, changes: changes) }
         var dates = [now]
         let nextDay = WidgetSelection.nextDaySwitch(after: now)
@@ -65,7 +68,7 @@ struct ScheduleProvider: AppIntentTimelineProvider {
             if nextDay < horizon { dates.append(nextDay) }
         }
         let entries = Array(Set(dates)).sorted().map {
-            ScheduleEntry(date: $0, group: configuration.group, schedule: schedule, message: message)
+            ScheduleEntry(date: $0, group: configuration.group, schedule: schedule, message: message, lunch: lunch)
         }
         // Reload at 17:00 too: on Friday the next day is in another week's data.
         // Changes are published during the day, so check every 30 minutes.
@@ -174,7 +177,19 @@ struct ScheduleWidgetView: View {
     }
     private var medium: some View {
         VStack(alignment: .leading, spacing: 4) {
-            header(SchoolDate.dayNames[day])
+            HStack(spacing: 4) {
+                Text(SchoolDate.dayNames[day]).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                if let lunch = entry.lunch[day], !dayRows.isEmpty {
+                    HStack(spacing: 2) {
+                        Image(systemName: "fork.knife")
+                        Text("Pusdienas \(lunch)").monospacedDigit()
+                    }.font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                        .accessibilityLabel("Pusdienas \(lunch)")
+                }
+                Spacer(minLength: 2)
+                Text(group?.short ?? "\(entry.group). grupa")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.blue).lineLimit(1)
+            }
             if dayRows.isEmpty {
                 Text("Šai dienai nav stundu").font(.subheadline).foregroundStyle(.secondary)
                 Spacer(minLength: 0)

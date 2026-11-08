@@ -287,4 +287,27 @@ final class TimetableTests: XCTestCase {
                                  teacher: "", room: "", subgroup: "", start: nil, end: nil)
         XCTAssertNil(other.applying([entry]).change)
     }
+    func testCorrectionWithDashInsideSubject() {
+        let entry = SubstitutionEntry(group: "2.k. 31.grupa", firstPeriod: 6, lastPeriod: 6,
+            text: "2.grupa: (Svešval. I (B2) - angļu val.) ➔ Programmas izstrādes process - Aizvietošana: (Sorochynska Olha) ➔ Uškāns Kaspars, Mainīt kabinetu: (310.) ➔ V115., 2.pusgr. Priekšmeta maiņa", kind: "change")
+        let fix = entry.correction
+        XCTAssertEqual(fix.subgroup, "2.grupa")
+        XCTAssertEqual(fix.subject, "Programmas izstrādes process")
+        XCTAssertEqual(fix.teacher, "Uškāns Kaspars")
+        XCTAssertEqual(fix.room, "V115.")
+        let lesson = SchoolLesson(id: "x", groupID: "g", day: 4, period: 6, durationPeriods: 1, subject: "Svešval. I (B2) - angļu val.",
+                                  teacher: "Sorochynska Olha", room: "310.", subgroup: "2.grupa", start: nil, end: nil)
+        XCTAssertEqual(lesson.applying([entry]).subject, "Programmas izstrādes process")
+        let other = SchoolLesson(id: "y", groupID: "g", day: 4, period: 6, durationPeriods: 1, subject: "Svešval. I (B2) - angļu val.",
+                                 teacher: "Krastiņa Sanita", room: "213.", subgroup: "1.grupa", start: nil, end: nil)
+        XCTAssertNil(other.applying([entry]).change)
+    }
+    func testLunchTimesKeptForDayWidget() throws {
+        let source = try TimetableParser.schedule(fixture(), week: week)
+        let lunches = WidgetSelection.lunchTimes(source, group: "31", shortenedDates: [])
+        for lesson in source.lessons(for: "-257") where lesson.isLunch && lesson.start != nil && lesson.end != nil {
+            XCTAssertNotNil(lunches[lesson.day])
+        }
+        XCTAssertTrue(lunches.values.allSatisfy { $0.count == 11 && $0.contains("–") })
+    }
 }
