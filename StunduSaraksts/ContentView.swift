@@ -18,13 +18,9 @@ final class ScheduleModel: ObservableObject {
 
     /// Changes are published per day; load the visible week's school days from today on.
     func loadChanges(for week: PublishedWeek) async {
-        let c = SchoolDate.calendar, today = c.startOfDay(for: Date())
-        let expected = (0..<5).compactMap { c.date(byAdding: .day, value: $0, to: SchoolDate.monday(week.from)) }
-            .filter { $0 >= today }.count
-        guard expected > 0 else { return }
         let loaded = await EduPageClient().substitutions(for: week)
         changes.merge(loaded) { $1 }
-        changesFailed = loaded.count < expected
+        changesFailed = loaded.count < 5
         SubstitutionCache.save(loaded)
         if let last = lastPrepare { prepare(group: last.group, shortenedDates: last.shortened) }
     }
@@ -57,8 +53,23 @@ final class ScheduleModel: ObservableObject {
         days = Dictionary(grouping: cards.sorted { ($0.day, $0.period, $0.id) < ($1.day, $1.period, $1.id) }, by: \.day)
         periods = slots
     }
+    private var running: Task<Void, Never>?
+
+    /// SwiftUI cancels `.refreshable`/`.task` work when the view redraws or the app goes to the
+    /// background, which made URLSession fail with "cancelled". The load runs in its own task,
+    /// so callers can stop waiting without stopping the download.
     func refresh(week: PublishedWeek? = nil) async {
-        guard !busy else { return }
+        if let running = running {
+            await running.value
+            if week == nil { return }
+        }
+        let task = Task { await self.load(week: week) }
+        running = task
+        await task.value
+        if running == task { running = nil }
+    }
+
+    private func load(week: PublishedWeek?) async {
         busy = true; error = nil
         defer { busy = false }
         do {
@@ -77,10 +88,34 @@ final class ScheduleModel: ObservableObject {
             }
             WidgetCenter.shared.reloadAllTimelines()
             await loadChanges(for: selected)
-            await ChangeNotifier.check()
+            await ChangeNotifier.check(weeks: available)
             ChangeNotifier.scheduleBackgroundRefresh()
+        } catch is CancellationError {
+            // Not a real failure; the next refresh loads the data.
+        } catch let error as URLError where error.code == .cancelled {
+            _ = error
         } catch {
-            self.error = "Neizdevās atjaunot sarakstu. \(error.localizedDescription)"
+            self.error = ScheduleModel.explain(error)
+        }
+    }
+
+    /// A message that says what went wrong and what to do, instead of a raw system error.
+    static func explain(_ error: Error) -> String {
+        if let error = error as? ScheduleError { return error.localizedDescription }
+        guard let url = error as? URLError else {
+            return "Neizdevās atjaunot sarakstu: \(error.localizedDescription)"
+        }
+        switch url.code {
+        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
+            return "Nav interneta savienojuma. Rādīti saglabātie dati; pievienojies internetam un atjauno."
+        case .timedOut:
+            return "EduPage pārāk ilgi neatbild. Mēģini vēlreiz pēc brīža."
+        case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+            return "Neizdevās sazināties ar EduPage serveri. Pārbaudi internetu vai mēģini vēlāk."
+        case .secureConnectionFailed, .serverCertificateUntrusted:
+            return "Drošs savienojums ar EduPage neizdevās (iespējams, publiskais Wi‑Fi prasa pieslēgšanos)."
+        default:
+            return "Neizdevās atjaunot sarakstu (tīkla kļūda \(url.code.rawValue)). Mēģini vēlreiz."
         }
     }
 }
@@ -90,6 +125,8 @@ struct ContentView: View {
     @AppStorage("selectedGroup") private var group = "31"
     @AppStorage("shortenedDates") private var shortenedDates = ""
     @AppStorage(ChangeNotifier.enabledKey) private var notifyChanges = false
+    @AppStorage(ChangeNotifier.newWeekKey) private var notifyNewWeek = false
+    @AppStorage("showWholeWeek") private var wholeWeek = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var day = SchoolDate.day(WidgetSelection.schoolDay(Date()))
     @State private var openedOn = SchoolDate.dateKey(Date())
@@ -111,6 +148,12 @@ struct ContentView: View {
         SchoolDate.full(selectedDate)
     }
     private var dayTitle: String { SchoolDate.dayNames[day] }
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (build \(build))"
+    }
     private let orange = Color(red: 0.95, green: 0.5, blue: 0.1)
     private func date(ofDay index: Int) -> Date {
         SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
@@ -126,6 +169,7 @@ struct ContentView: View {
     }
     private var isToday: Bool { SchoolDate.calendar.isDateInToday(selectedDate) }
     private func move(by offset: Int) {
+        guard !wholeWeek else { return }
         let target = day + offset
         guard (0..<5).contains(target) else { return }
         withAnimation(.easeInOut(duration: 0.2)) { day = target }
@@ -143,6 +187,21 @@ struct ContentView: View {
                     }
                     if let schedule = schedule {
                         weekPicker(schedule)
+                        Picker("Skats", selection: $wholeWeek) {
+                            Text("Diena").tag(false)
+                            Text("Visa nedēļa").tag(true)
+                        }.pickerStyle(.segmented)
+                        if wholeWeek {
+                            if selected == nil {
+                                ContentUnavailableView("Izvēlies grupu", systemImage: "person.2", description: Text("Šajā nedēļā saglabātā grupa nav atrasta."))
+                            } else {
+                                TimelineView(.periodic(from: .now, by: 60)) { context in
+                                    LazyVStack(spacing: 10) {
+                                        ForEach(0..<5, id: \.self) { index in weekDayCard(index, now: context.date) }
+                                    }
+                                }
+                            }
+                        } else {
                         dayPicker
                         if !looseChanges.isEmpty { changesCard }
                         if selected == nil {
@@ -160,6 +219,7 @@ struct ContentView: View {
                                 }
                             }
                         }
+                        }
                         footer(schedule)
                     } else {
                         if model.busy {
@@ -170,9 +230,12 @@ struct ContentView: View {
                     }
                 }.padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 20)
                     .contentShape(Rectangle())
-                    .simultaneousGesture(DragGesture(minimumDistance: 40).onEnded { value in
-                        guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                        move(by: value.translation.width < 0 ? 1 : -1)
+                    // Only a clear, mostly flat sideways swipe changes the day; scrolling never does.
+                    .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { value in
+                        let w = value.translation.width, h = value.translation.height
+                        guard abs(w) > 110, abs(h) < 45, abs(w) > abs(h) * 3,
+                              abs(value.predictedEndTranslation.width) > 160 else { return }
+                        move(by: w < 0 ? 1 : -1)
                     })
             }
             .background(Color(.systemGroupedBackground))
@@ -220,10 +283,16 @@ struct ContentView: View {
     private func weekPicker(_ schedule: SchoolSchedule) -> some View {
         HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(dayTitle).font(.title2.weight(.bold)).tracking(-0.5)
+                Text(wholeWeek ? "Visa nedēļa" : dayTitle).font(.title2.weight(.bold)).tracking(-0.5)
                 HStack(spacing: 6) {
-                    Text(fullDate).foregroundStyle(.secondary)
-                    if isToday { Text("· Šodien").foregroundStyle(blue) }
+                    if wholeWeek {
+                        let total = (0..<5).reduce(0) { $0 + changes(ofDay: $1).count }
+                        Text(total == 0 ? "Bez izmaiņām" : "\(total) \(total == 1 ? "izmaiņa" : "izmaiņas")")
+                            .foregroundStyle(total == 0 ? Color.secondary : orange)
+                    } else {
+                        Text(fullDate).foregroundStyle(.secondary)
+                        if isToday { Text("· Šodien").foregroundStyle(blue) }
+                    }
                 }.font(.subheadline.weight(.medium))
             }
             Spacer(minLength: 4)
@@ -360,6 +429,86 @@ struct ContentView: View {
         .opacity(cancelled || (lesson.end.map { $0 < now } == true && isToday) ? 0.55 : 1)
     }
 
+    /// Consecutive periods of the same lesson shown as one row ("1.–2.").
+    private struct WeekRow: Identifiable {
+        let id: String
+        let first: Int, last: Int
+        let start: Date?, end: Date?
+        let lesson: SchoolLesson
+    }
+    private func weekRows(_ day: Int) -> [WeekRow] {
+        var rows: [WeekRow] = []
+        for lesson in (model.days[day] ?? []).filter({ !$0.isLunch }) {
+            if let prev = rows.last, prev.last + 1 == lesson.period, prev.lesson.subject == lesson.subject,
+               prev.lesson.room == lesson.room, prev.lesson.subgroup == lesson.subgroup, prev.lesson.change == lesson.change {
+                rows[rows.count - 1] = WeekRow(id: prev.id, first: prev.first, last: lesson.period,
+                                               start: prev.start, end: lesson.end ?? prev.end, lesson: prev.lesson)
+            } else {
+                rows.append(WeekRow(id: lesson.id, first: lesson.period, last: lesson.period,
+                                    start: lesson.start, end: lesson.end, lesson: lesson))
+            }
+        }
+        return rows
+    }
+
+    private func weekDayCard(_ index: Int, now: Date) -> some View {
+        let date = date(ofDay: index)
+        let today = SchoolDate.calendar.isDate(date, inSameDayAs: now)
+        let rows = weekRows(index)
+        let changeCount = changes(ofDay: index).count
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { day = index; wholeWeek = false }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(SchoolDate.dayNames[index]).font(.headline).foregroundStyle(today ? blue : Color.primary)
+                    Text(SchoolDate.short(date)).font(.subheadline).foregroundStyle(.secondary)
+                    if today { Text("Šodien").font(.caption2.weight(.semibold)).foregroundStyle(blue) }
+                    if changeCount > 0 {
+                        Text("\(changeCount) izm.").font(.caption2.weight(.semibold)).foregroundStyle(orange)
+                            .padding(.horizontal, 6).padding(.vertical, 2).background(orange.opacity(0.14), in: Capsule())
+                    }
+                    Spacer()
+                    if let end = rows.compactMap(\.end).max() {
+                        Text("līdz \(SchoolDate.time(end))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+            }.buttonStyle(.plain).accessibilityHint("Atvērt dienas skatu")
+            if rows.isEmpty {
+                Text("Nav stundu").font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(rows) { row in
+                    let lesson = row.lesson
+                    let cancelled = lesson.change?.cancelled == true
+                    let current = today && (row.start.map { $0 <= now } ?? false) && (row.end.map { $0 > now } ?? false)
+                    let past = today && (row.end.map { $0 <= now } ?? false)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(row.first == row.last ? "\(row.first)." : "\(row.first).–\(row.last).")
+                            .font(.caption2.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
+                            .frame(width: 34, alignment: .leading)
+                        Text(row.start.map(SchoolDate.time) ?? "—")
+                            .font(.caption.weight(.medium)).monospacedDigit()
+                            .foregroundStyle(current ? blue : Color.secondary)
+                            .frame(width: 40, alignment: .leading)
+                        Text(SubjectDisplay.name(lesson.subject)).font(.subheadline.weight(current ? .semibold : .regular))
+                            .strikethrough(cancelled)
+                            .foregroundStyle(lesson.change != nil ? orange : (current ? blue : Color.primary))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(cancelled ? "nenotiek" : lesson.room).font(.caption)
+                            .foregroundStyle(lesson.change != nil ? orange : Color.secondary).lineLimit(1)
+                    }
+                    .opacity(past || cancelled ? 0.5 : 1)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+        .padding(14)
+        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(today ? blue.opacity(0.45) : Color.clear, lineWidth: 1))
+    }
+
     private var changesCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Citas izmaiņas", systemImage: "arrow.triangle.2.circlepath")
@@ -472,13 +621,25 @@ struct ContentView: View {
                             }
                         }
                     }))
+                    Toggle("Paziņot par jaunu nedēļu", isOn: Binding(get: { notifyNewWeek }, set: { on in
+                        if !on { notifyNewWeek = false; return }
+                        Task {
+                            let allowed = await ChangeNotifier.requestPermission()
+                            if allowed { ChangeNotifier.rememberLatestWeek(model.weeks) }
+                            notifyNewWeek = allowed
+                            if allowed { ChangeNotifier.scheduleBackgroundRefresh() }
+                        }
+                    }))
                 } header: { Text("Paziņojumi") } footer: {
-                    Text("Paziņo par jaunām izmaiņām tavai grupai šodien un nākamajā mācību dienā. iOS pats izvēlas, cik bieži pārbaudīt fonā; aplikāciju atverot, pārbaude notiek uzreiz. Ja paziņojumi nenāk, Iestatījumos ieslēdz “Fona atjaunināšana”.")
+                    Text("Izmaiņas: paziņo par jaunām izmaiņām tavai grupai šodien un nākamajā mācību dienā. Jauna nedēļa: paziņo, kad skola EduPage publicē nākamās nedēļas sarakstu. iOS pats izvēlas, cik bieži pārbaudīt fonā; aplikāciju atverot, pārbaude notiek uzreiz. Ja paziņojumi nenāk, Iestatījumos ieslēdz “Fona atjaunināšana”.")
                 }
                 Section("Sākuma ekrāna logrīks") {
                     Text("Turi nospiestu sākuma ekrānu un pievieno “Stundu Saraksts”. Grupu izvēlies logrīka iestatījumos.")
                     Text("Ja izmanto pirmssvētku laikus, arī logrīka iestatījumos norādi datumu formātā GGGG-MM-DD. Aplikācijas izvēle uz logrīku automātiski nepāriet.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Par aplikāciju") {
+                    LabeledContent("Versija", value: appVersion)
                 }
                 Section("Stundu laiki") {
                     Text("Pirmdienām, otrdienām–ceturtdienām un piektdienām ir atsevišķi laiki pēc skolas tabulas. Visi laiki ir pēc Latvijas laika.")

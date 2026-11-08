@@ -1,4 +1,20 @@
-# Stundu Saraksts · 1.0
+# Stundu Saraksts · 1.2
+
+## Jaunums 1.2
+
+- **Izmaiņas strādā visām dienām.** Agrāk izmaiņas ielādējās tikai no šodienas uz priekšu, tāpēc, piemēram, nedēļas nogalē pagājušās piektdienas izmaiņas nebija redzamas. Tagad tiek ielādētas visas piecas nedēļas dienas. Izlabota arī priekšmeta nolasīšana, ja nosaukumā ir domuzīme, piemēram, “Svešval. I (B2) - angļu val.”.
+- **Pusdienas dienas logrīkā.** Vidējā logrīka augšā redzams pusdienu laiks, piemēram, “🍴 Pusdienas 12:10–12:40”. Stundu rindas paliek tādas pašas.
+- **Pavilkiens starp dienām** nostrādā tikai ar skaidru, garu pavilkienu uz sāniem, nevis ritinot sarakstu.
+- **Vairs nav kļūdas “Neizdevās atjaunot sarakstu. cancelled”.** iOS pārtrauca ielādi, kad ekrāns pārzīmējās vai aplikācija aizgāja fonā. Tagad ielāde turpinās līdz galam, un pārtraukšana netiek rādīta kā kļūda.
+- **Versija** redzama iestatījumos, sadaļā “Par aplikāciju”.
+
+
+## Jaunums 1.1
+
+**Visa nedēļa.** Augšā ir pārslēgs “Diena / Visa nedēļa”. Nedēļas skatā redzamas visas piecas dienas vienā lapā: stundas numurs, sākuma laiks, priekšmets un kabinets. Dubultstundas ir apvienotas vienā rindā, izmaiņas ir oranžas, atceltās stundas pārsvītrotas, un šodiena ir iezīmēta zilā krāsā. Uzspiežot uz dienas nosaukuma, atveras tās dienas detalizētais skats.
+
+**Paziņojums par jaunu nedēļu.** Iestatījumos ieslēdz “Paziņot par jaunu nedēļu”. Kad skola EduPage publicē jaunas nedēļas sarakstu, atnāk paziņojums. Pārbaude notiek, kad aplikāciju atver un iOS fona atjaunināšanas laikā. Paziņojumi tagad parādās arī tad, ja aplikācija ir atvērta.
+
 
 ## Jaunums 1.0
 

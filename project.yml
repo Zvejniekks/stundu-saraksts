@@ -17,8 +17,8 @@ targets:
       path: StunduSaraksts/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "10"
+        CFBundleShortVersionString: "1.2"
+        CFBundleVersion: "13"
         UILaunchScreen: {}
         UIBackgroundModes:
           - fetch
@@ -43,8 +43,8 @@ targets:
       path: StunduWidget/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "10"
+        CFBundleShortVersionString: "1.2"
+        CFBundleVersion: "13"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
