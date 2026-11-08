@@ -164,7 +164,7 @@ struct ContentView: View {
     @AppStorage("showWholeWeek") private var wholeWeek = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
-    @ScaledMetric(relativeTo: .title3) private var timeColumn: CGFloat = 56
+    @ScaledMetric(relativeTo: .title3) private var timeColumn: CGFloat = 66
     @ScaledMetric(relativeTo: .caption) private var periodColumn: CGFloat = 34
     @ScaledMetric(relativeTo: .caption) private var startColumn: CGFloat = 42
     @State private var day = SchoolDate.day(WidgetSelection.schoolDay(Date()))
