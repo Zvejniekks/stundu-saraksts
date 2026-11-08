@@ -53,8 +53,23 @@ final class ScheduleModel: ObservableObject {
         days = Dictionary(grouping: cards.sorted { ($0.day, $0.period, $0.id) < ($1.day, $1.period, $1.id) }, by: \.day)
         periods = slots
     }
+    private var running: Task<Void, Never>?
+
+    /// SwiftUI cancels `.refreshable`/`.task` work when the view redraws or the app goes to the
+    /// background, which made URLSession fail with "cancelled". The load runs in its own task,
+    /// so callers can stop waiting without stopping the download.
     func refresh(week: PublishedWeek? = nil) async {
-        guard !busy else { return }
+        if let running = running {
+            await running.value
+            if week == nil { return }
+        }
+        let task = Task { await self.load(week: week) }
+        running = task
+        await task.value
+        if running == task { running = nil }
+    }
+
+    private func load(week: PublishedWeek?) async {
         busy = true; error = nil
         defer { busy = false }
         do {
@@ -75,6 +90,10 @@ final class ScheduleModel: ObservableObject {
             await loadChanges(for: selected)
             await ChangeNotifier.check(weeks: available)
             ChangeNotifier.scheduleBackgroundRefresh()
+        } catch is CancellationError {
+            // Not a real failure; the next refresh loads the data.
+        } catch let error as URLError where error.code == .cancelled {
+            _ = error
         } catch {
             self.error = "Neizdevās atjaunot sarakstu. \(error.localizedDescription)"
         }
