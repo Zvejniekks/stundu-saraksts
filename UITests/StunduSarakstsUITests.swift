@@ -78,21 +78,29 @@ final class StunduSarakstsUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(element(containing: "Matemātika").waitForExistence(timeout: 10))
         try app.performAccessibilityAudit(for: [.dynamicType, .sufficientElementDescription, .hitRegion]) { issue in
-            Self.report(issue)
+            Self.report(issue, in: self.app)
             // System controls (navigation bar, segmented picker) are Apple's to fix.
             guard let element = issue.element else { return false }
             return element.elementType == .navigationBar || element.elementType == .segmentedControl
+                || Self.cutOffByScreen(issue, in: self.app)
         }
         app.buttons["Visa nedēļa"].tap()
         try app.performAccessibilityAudit(for: [.dynamicType, .sufficientElementDescription]) { issue in
-            Self.report(issue)
-            return issue.element?.elementType == .segmentedControl
+            Self.report(issue, in: self.app)
+            return issue.element?.elementType == .segmentedControl || Self.cutOffByScreen(issue, in: self.app)
         }
     }
 
-    /// Names the element in the CI log, so a failing audit says what to fix.
-    private static func report(_ issue: XCUIAccessibilityAuditIssue) {
-        let element = issue.element.map { "\($0.elementType.rawValue) '\($0.label)'" } ?? "no element"
+    /// The audit reads text cut off by the screen edge as text that does not scale.
+    /// Scaling itself is covered by testLargestAccessibilityTextSize.
+    private static func cutOffByScreen(_ issue: XCUIAccessibilityAuditIssue, in app: XCUIApplication) -> Bool {
+        guard issue.auditType == .dynamicType, let element = issue.element else { return false }
+        return !app.frame.contains(element.frame)
+    }
+
+    /// Names the element and its position in the CI log, so a failing audit says what to fix.
+    private static func report(_ issue: XCUIAccessibilityAuditIssue, in app: XCUIApplication) {
+        let element = issue.element.map { "\($0.elementType.rawValue) '\($0.label)' \($0.frame) screen \(app.frame)" } ?? "no element"
         print("AUDIT: \(issue.compactDescription) — \(element)")
     }
 }
