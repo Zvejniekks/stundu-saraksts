@@ -495,6 +495,9 @@ struct ContentView: View {
         let changed = lesson.change
         let cancelled = changed?.cancelled == true
         let accent = changed != nil ? orange : SubjectColor.color(for: lesson.subject)
+        let dim = cancelled || (lesson.end.map { $0 < now } == true && isToday)
+        let blue = dim ? Theme.dimmed : self.blue
+        let orange = dim ? Theme.dimmed : self.orange
         let stacked = typeSize.isAccessibilitySize
         let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                              : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
@@ -512,7 +515,7 @@ struct ContentView: View {
                         if active { Circle().fill(blue).frame(width: 6, height: 6).padding(.top, 8) }
                     }.frame(width: timeColumn, alignment: .leading)
                 }
-            }
+            }.foregroundStyle(dim ? Theme.dimmed : Color.primary)
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Text(active ? "TAGAD · \(periodText). STUNDA" : (inBreak ? "STARPBRĪDIS" : "\(periodText). STUNDA"))
@@ -527,7 +530,7 @@ struct ContentView: View {
                 }
                 Text(lesson.subject).font(.title3.weight(.semibold))
                     .strikethrough(cancelled)
-                    .foregroundStyle(cancelled ? Color.secondary : Color.primary)
+                    .foregroundStyle(dim ? Theme.dimmed : Color.primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let old = changed?.previousSubject {
                     Text("Bija: \(old)").font(.caption).strikethrough().foregroundStyle(.secondary)
@@ -568,9 +571,9 @@ struct ContentView: View {
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 2).fill(accent).frame(width: 4).padding(.vertical, 14).padding(.leading, 8)
+                .opacity(dim ? 0.4 : 1)
         }
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(active ? blue.opacity(0.6) : Color.clear, lineWidth: 1.5))
-        .opacity(cancelled || (lesson.end.map { $0 < now } == true && isToday) ? 0.6 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(lessonDescription(lesson, periodText: periodText, active: active))
     }
@@ -649,6 +652,7 @@ struct ContentView: View {
                     let cancelled = lesson.change?.cancelled == true
                     let current = today && (row.start.map { $0 <= now } ?? false) && (row.end.map { $0 > now } ?? false)
                     let past = today && (row.end.map { $0 <= now } ?? false)
+                    let orange = past || cancelled ? Theme.dimmed : self.orange
                     let rowLayout = typeSize.isAccessibilitySize
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
                         : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
@@ -665,13 +669,12 @@ struct ContentView: View {
                         }
                         Text(SubjectDisplay.name(lesson.subject)).font(.subheadline.weight(current ? .semibold : .regular))
                             .strikethrough(cancelled)
-                            .foregroundStyle(lesson.change != nil ? orange : (current ? blue : Color.primary))
+                            .foregroundStyle(lesson.change != nil ? orange : (current ? blue : (past ? Theme.dimmed : Color.primary)))
                             .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
                         if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
                         Text(cancelled ? "nenotiek" : lesson.room).font(.caption)
                             .foregroundStyle(lesson.change != nil ? orange : Color.secondary).lineLimit(1)
                     }
-                    .opacity(past || cancelled ? 0.6 : 1)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(weekRowDescription(row, current: current))
                 }

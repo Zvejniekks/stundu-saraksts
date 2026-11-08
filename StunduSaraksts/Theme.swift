@@ -16,4 +16,6 @@ enum Theme {
     static let orange = dynamic(light: (0.72, 0.33, 0.00), dark: (1.00, 0.65, 0.30))
     /// Filled backgrounds behind white text (selected day).
     static let blueFill = Color(red: 0.00, green: 0.40, blue: 0.85)
+    /// Ended and cancelled lessons: muted, but still 4.5:1 (fading the text with opacity was not).
+    static let dimmed = dynamic(light: (0.40, 0.40, 0.43), dark: (0.62, 0.62, 0.65))
 }
