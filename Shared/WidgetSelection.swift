@@ -39,6 +39,16 @@ enum WidgetSelection {
             .applyingShortenedDates(shortenedDates)
             .applyingChanges(changes, group: schedule.group(matching: group))
     }
+    /// Lunch time per weekday ("12:10–12:40") for the day widget, read before lunch is removed.
+    static func lunchTimes(_ schedule: SchoolSchedule, group: String, shortenedDates: Set<String>) -> [Int: String] {
+        guard let id = schedule.group(matching: group)?.id else { return [:] }
+        var result: [Int: String] = [:]
+        for lesson in schedule.applyingShortenedDates(shortenedDates).lessons(for: id) where lesson.isLunch {
+            guard result[lesson.day] == nil, let start = lesson.start, let end = lesson.end else { continue }
+            result[lesson.day] = "\(SchoolDate.time(start))–\(SchoolDate.time(end))"
+        }
+        return result
+    }
     static func next(schedule: SchoolSchedule, groupID: String, now: Date) -> SchoolLesson? {
         let all = schedule.lessons(for: groupID).filter { !$0.isLunch && $0.change?.cancelled != true }
         if schedule.week.until <= now { return all.first }

@@ -18,13 +18,9 @@ final class ScheduleModel: ObservableObject {
 
     /// Changes are published per day; load the visible week's school days from today on.
     func loadChanges(for week: PublishedWeek) async {
-        let c = SchoolDate.calendar, today = c.startOfDay(for: Date())
-        let expected = (0..<5).compactMap { c.date(byAdding: .day, value: $0, to: SchoolDate.monday(week.from)) }
-            .filter { $0 >= today }.count
-        guard expected > 0 else { return }
         let loaded = await EduPageClient().substitutions(for: week)
         changes.merge(loaded) { $1 }
-        changesFailed = loaded.count < expected
+        changesFailed = loaded.count < 5
         SubstitutionCache.save(loaded)
         if let last = lastPrepare { prepare(group: last.group, shortenedDates: last.shortened) }
     }
@@ -113,6 +109,12 @@ struct ContentView: View {
         SchoolDate.full(selectedDate)
     }
     private var dayTitle: String { SchoolDate.dayNames[day] }
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (build \(build))"
+    }
     private let orange = Color(red: 0.95, green: 0.5, blue: 0.1)
     private func date(ofDay index: Int) -> Date {
         SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
@@ -189,9 +191,12 @@ struct ContentView: View {
                     }
                 }.padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 20)
                     .contentShape(Rectangle())
-                    .simultaneousGesture(DragGesture(minimumDistance: 40).onEnded { value in
-                        guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                        move(by: value.translation.width < 0 ? 1 : -1)
+                    // Only a clear, mostly flat sideways swipe changes the day; scrolling never does.
+                    .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { value in
+                        let w = value.translation.width, h = value.translation.height
+                        guard abs(w) > 110, abs(h) < 45, abs(w) > abs(h) * 3,
+                              abs(value.predictedEndTranslation.width) > 160 else { return }
+                        move(by: w < 0 ? 1 : -1)
                     })
             }
             .background(Color(.systemGroupedBackground))
@@ -593,6 +598,9 @@ struct ContentView: View {
                     Text("Turi nospiestu sākuma ekrānu un pievieno “Stundu Saraksts”. Grupu izvēlies logrīka iestatījumos.")
                     Text("Ja izmanto pirmssvētku laikus, arī logrīka iestatījumos norādi datumu formātā GGGG-MM-DD. Aplikācijas izvēle uz logrīku automātiski nepāriet.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Par aplikāciju") {
+                    LabeledContent("Versija", value: appVersion)
                 }
                 Section("Stundu laiki") {
                     Text("Pirmdienām, otrdienām–ceturtdienām un piektdienām ir atsevišķi laiki pēc skolas tabulas. Visi laiki ir pēc Latvijas laika.")
