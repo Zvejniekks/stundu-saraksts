@@ -56,9 +56,14 @@ final class StunduSarakstsUITests: XCTestCase {
         let settings = app.buttons["Iestatījumi"]
         XCTAssertTrue(settings.waitForExistence(timeout: 10))
         settings.tap()
-        XCTAssertTrue(app.staticTexts["Versija"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Saglabātās nedēļas"].exists)
-        XCTAssertTrue(app.switches["Paziņot par stundu izmaiņām"].exists)
+        XCTAssertTrue(app.switches["Paziņot par stundu izmaiņām"].waitForExistence(timeout: 5))
+        // Lower rows of the settings list only exist once scrolled into view.
+        let version = element(containing: "Versija")
+        let saved = element(containing: "Saglabātās nedēļas")
+        for _ in 0..<4 where !(version.exists && saved.exists) { app.swipeUp() }
+        XCTAssertTrue(saved.exists)
+        XCTAssertTrue(version.exists)
+        XCTAssertTrue(version.label.contains("1.") || element(containing: "build").exists, version.label)
     }
 
     func testLargestAccessibilityTextSize() {
@@ -73,13 +78,21 @@ final class StunduSarakstsUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(element(containing: "Matemātika").waitForExistence(timeout: 10))
         try app.performAccessibilityAudit(for: [.dynamicType, .sufficientElementDescription, .hitRegion]) { issue in
+            Self.report(issue)
             // System controls (navigation bar, segmented picker) are Apple's to fix.
             guard let element = issue.element else { return false }
             return element.elementType == .navigationBar || element.elementType == .segmentedControl
         }
         app.buttons["Visa nedēļa"].tap()
         try app.performAccessibilityAudit(for: [.dynamicType, .sufficientElementDescription]) { issue in
-            issue.element?.elementType == .segmentedControl
+            Self.report(issue)
+            return issue.element?.elementType == .segmentedControl
         }
+    }
+
+    /// Names the element in the CI log, so a failing audit says what to fix.
+    private static func report(_ issue: XCUIAccessibilityAuditIssue) {
+        let element = issue.element.map { "\($0.elementType.rawValue) '\($0.label)'" } ?? "no element"
+        print("AUDIT: \(issue.compactDescription) — \(element)")
     }
 }

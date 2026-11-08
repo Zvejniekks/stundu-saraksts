@@ -402,31 +402,42 @@ struct ContentView: View {
     }
 
     private var dayPicker: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<5) { index in
-                let date = SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
-                let today = SchoolDate.calendar.isDateInToday(date)
-                let hasChanges = !changes(ofDay: index).isEmpty
-                Button { withAnimation(.easeInOut(duration: 0.18)) { day = index } } label: {
-                    VStack(spacing: 4) {
-                        Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index]).font(.caption.weight(.medium))
-                        Text("\(SchoolDate.calendar.component(.day, from: date))").font(.title3.weight(.semibold))
-                            .foregroundStyle(day != index && today ? blue : (day == index ? Color.white : Color.primary))
-                        Circle().fill(hasChanges ? (day == index ? Color.white : orange) : Color.clear)
-                            .frame(width: 6, height: 6)
+        Group {
+            if typeSize.isAccessibilitySize {
+                // Very large text: the five days scroll sideways instead of shrinking the text.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(0..<5, id: \.self) { index in dayButton(index).frame(minWidth: 96) }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44).padding(.top, 10).padding(.bottom, 6)
-                    .background(day == index ? Theme.blueFill : surface, in: RoundedRectangle(cornerRadius: 16))
-                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(today && day != index ? blue.opacity(0.6) : .clear, lineWidth: 1.5))
-                    .foregroundStyle(day == index ? Color.white : Color.primary)
-                    .contentShape(RoundedRectangle(cornerRadius: 16))
-                }.buttonStyle(.plain)
-                    .accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.full(date))\(today ? ", šodien" : "")\(hasChanges ? ", ir izmaiņas" : "")")
-                    .accessibilityAddTraits(day == index ? .isSelected : [])
+                }
+            } else {
+                HStack(spacing: 6) {
+                    ForEach(0..<5, id: \.self) { index in dayButton(index) }
+                }
             }
         }
-        // Five buttons must fit one row; larger sizes are still readable in the lesson list.
-        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+    }
+
+    private func dayButton(_ index: Int) -> some View {
+        let date = SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
+        let today = SchoolDate.calendar.isDateInToday(date)
+        let hasChanges = !changes(ofDay: index).isEmpty
+        return Button { withAnimation(.easeInOut(duration: 0.18)) { day = index } } label: {
+            VStack(spacing: 4) {
+                Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index]).font(.caption.weight(.medium))
+                Text("\(SchoolDate.calendar.component(.day, from: date))").font(.title3.weight(.semibold))
+                    .foregroundStyle(day != index && today ? blue : (day == index ? Color.white : Color.primary))
+                Circle().fill(hasChanges ? (day == index ? Color.white : orange) : Color.clear)
+                    .frame(width: 6, height: 6)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44).padding(.top, 10).padding(.bottom, 6)
+            .background(day == index ? Theme.blueFill : surface, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(today && day != index ? blue.opacity(0.6) : .clear, lineWidth: 1.5))
+            .foregroundStyle(day == index ? Color.white : Color.primary)
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+        }.buttonStyle(.plain)
+            .accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.full(date))\(today ? ", šodien" : "")\(hasChanges ? ", ir izmaiņas" : "")")
+            .accessibilityAddTraits(day == index ? .isSelected : [])
     }
 
     private var daySummary: some View {
@@ -638,22 +649,25 @@ struct ContentView: View {
                     let cancelled = lesson.change?.cancelled == true
                     let current = today && (row.start.map { $0 <= now } ?? false) && (row.end.map { $0 > now } ?? false)
                     let past = today && (row.end.map { $0 <= now } ?? false)
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    let rowLayout = typeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                        : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+                    rowLayout {
                         Text(row.first == row.last ? "\(row.first)." : "\(row.first).–\(row.last).")
                             .font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
-                            .frame(width: periodColumn, alignment: .leading)
+                            .frame(width: typeSize.isAccessibilitySize ? nil : periodColumn, alignment: .leading)
                         Text(row.start.map(SchoolDate.time) ?? "—")
                             .font(.caption.weight(.medium)).monospacedDigit()
                             .foregroundStyle(current ? blue : Color.secondary)
-                            .frame(width: startColumn, alignment: .leading)
+                            .frame(width: typeSize.isAccessibilitySize ? nil : startColumn, alignment: .leading)
                         if lesson.change != nil {
                             Image(systemName: "arrow.triangle.2.circlepath").font(.caption2).foregroundStyle(orange)
                         }
                         Text(SubjectDisplay.name(lesson.subject)).font(.subheadline.weight(current ? .semibold : .regular))
                             .strikethrough(cancelled)
                             .foregroundStyle(lesson.change != nil ? orange : (current ? blue : Color.primary))
-                            .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-                        Spacer(minLength: 4)
+                            .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                        if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
                         Text(cancelled ? "nenotiek" : lesson.room).font(.caption)
                             .foregroundStyle(lesson.change != nil ? orange : Color.secondary).lineLimit(1)
                     }
@@ -666,7 +680,6 @@ struct ContentView: View {
         .padding(14)
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(today ? blue.opacity(0.6) : Color.clear, lineWidth: 1.5))
-        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
     }
 
     private var changesCard: some View {
