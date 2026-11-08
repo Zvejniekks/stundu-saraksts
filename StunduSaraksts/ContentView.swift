@@ -95,7 +95,27 @@ final class ScheduleModel: ObservableObject {
         } catch let error as URLError where error.code == .cancelled {
             _ = error
         } catch {
-            self.error = "Neizdevās atjaunot sarakstu. \(error.localizedDescription)"
+            self.error = ScheduleModel.explain(error)
+        }
+    }
+
+    /// A message that says what went wrong and what to do, instead of a raw system error.
+    static func explain(_ error: Error) -> String {
+        if let error = error as? ScheduleError { return error.localizedDescription }
+        guard let url = error as? URLError else {
+            return "Neizdevās atjaunot sarakstu: \(error.localizedDescription)"
+        }
+        switch url.code {
+        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
+            return "Nav interneta savienojuma. Rādīti saglabātie dati; pievienojies internetam un atjauno."
+        case .timedOut:
+            return "EduPage pārāk ilgi neatbild. Mēģini vēlreiz pēc brīža."
+        case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+            return "Neizdevās sazināties ar EduPage serveri. Pārbaudi internetu vai mēģini vēlāk."
+        case .secureConnectionFailed, .serverCertificateUntrusted:
+            return "Drošs savienojums ar EduPage neizdevās (iespējams, publiskais Wi‑Fi prasa pieslēgšanos)."
+        default:
+            return "Neizdevās atjaunot sarakstu (tīkla kļūda \(url.code.rawValue)). Mēģini vēlreiz."
         }
     }
 }
