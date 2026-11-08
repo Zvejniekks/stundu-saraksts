@@ -1,4 +1,12 @@
-# Stundu Saraksts · 1.1
+# Stundu Saraksts · 1.2
+
+## Jaunums 1.2
+
+- **Izmaiņas strādā visām dienām.** Agrāk izmaiņas ielādējās tikai no šodienas uz priekšu, tāpēc, piemēram, nedēļas nogalē pagājušās piektdienas izmaiņas nebija redzamas. Tagad tiek ielādētas visas piecas nedēļas dienas. Izlabota arī priekšmeta nolasīšana, ja nosaukumā ir domuzīme, piemēram, “Svešval. I (B2) - angļu val.”.
+- **Pusdienas dienas logrīkā.** Vidējā logrīka augšā redzams pusdienu laiks, piemēram, “🍴 Pusdienas 12:10–12:40”. Stundu rindas paliek tādas pašas.
+- **Pavilkiens starp dienām** nostrādā tikai ar skaidru, garu pavilkienu uz sāniem, nevis ritinot sarakstu.
+- **Versija** redzama iestatījumos, sadaļā “Par aplikāciju”.
+
 
 ## Jaunums 1.1
 

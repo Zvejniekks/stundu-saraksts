@@ -126,7 +126,7 @@ extension SubstitutionEntry {
     var correction: SubstitutionCorrection {
         var result = SubstitutionCorrection(cancelled: isCancelled)
         var head = text, detail = ""
-        if let r = text.range(of: " - ") { head = String(text[..<r.lowerBound]); detail = String(text[r.upperBound...]) }
+        if let r = SubstitutionEntry.mainSeparator(in: text) { head = String(text[..<r.lowerBound]); detail = String(text[r.upperBound...]) }
         // "2.grupa: Subject" means only that subgroup is affected.
         if let r = head.range(of: #"^\s*\d+\.\s*grupa:\s*"#, options: .regularExpression) {
             result.subgroup = head[r].replacingOccurrences(of: ":", with: "").trimmingCharacters(in: .whitespaces)
@@ -147,6 +147,17 @@ extension SubstitutionEntry {
         result.teacher = value(after: "Aizvietošana:") ?? value(after: "Skolotājs:")
         result.room = value(after: "Mainīt kabinetu:") ?? value(after: "Kabinets:")
         return result
+    }
+    /// The first " - " outside brackets: subjects like "(Svešval. I (B2) - angļu val.)" contain one too.
+    static func mainSeparator(in text: String) -> Range<String.Index>? {
+        var depth = 0, i = text.startIndex
+        while i < text.endIndex {
+            let ch = text[i]
+            if ch == "(" { depth += 1 } else if ch == ")" { depth = max(0, depth - 1) }
+            else if depth == 0, text[i...].hasPrefix(" - ") { return i..<text.index(i, offsetBy: 3) }
+            i = text.index(after: i)
+        }
+        return nil
     }
     private func clean(_ s: String) -> String {
         s.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "()")))
@@ -189,12 +200,12 @@ extension SchoolSchedule {
 }
 
 extension EduPageClient {
-    /// Changes for the school days of `week` from today on. Missing days failed to load.
-    func substitutions(for week: PublishedWeek, now: Date = Date()) async -> [String: SubstitutionDay] {
-        let c = SchoolDate.calendar, today = c.startOfDay(for: now)
+    /// Changes for all five school days of `week`, past days included. Missing days failed to load.
+    func substitutions(for week: PublishedWeek) async -> [String: SubstitutionDay] {
+        let c = SchoolDate.calendar
         var result: [String: SubstitutionDay] = [:]
         for offset in 0..<5 {
-            guard let date = c.date(byAdding: .day, value: offset, to: SchoolDate.monday(week.from)), date >= today else { continue }
+            guard let date = c.date(byAdding: .day, value: offset, to: SchoolDate.monday(week.from)) else { continue }
             if let day = try? await substitutions(on: date) { result[day.date] = day }
         }
         return result
