@@ -18,7 +18,7 @@ targets:
       properties:
         CFBundleDisplayName: Stundu Saraksts
         CFBundleShortVersionString: "1.2"
-        CFBundleVersion: "12"
+        CFBundleVersion: "13"
         UILaunchScreen: {}
         UIBackgroundModes:
           - fetch
@@ -44,7 +44,7 @@ targets:
       properties:
         CFBundleDisplayName: Stundu Saraksts
         CFBundleShortVersionString: "1.2"
-        CFBundleVersion: "12"
+        CFBundleVersion: "13"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
