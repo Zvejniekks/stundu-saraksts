@@ -3,20 +3,36 @@ import WidgetKit
 
 @MainActor
 final class ScheduleModel: ObservableObject {
-    @Published var schedule = ScheduleCache.read()
-    @Published var weeks: [PublishedWeek] = []
+    @Published var schedule: SchoolSchedule?
+    @Published var weeks: [PublishedWeek]
     @Published var busy = false
     @Published var error: String?
+    /// Set when the last refresh could not reach EduPage and saved data is shown instead.
+    @Published private(set) var offlineSince: Date?
     @Published private(set) var displayed: SchoolSchedule?
     @Published private(set) var currentGroup: SchoolGroup?
     @Published private(set) var days: [Int: [SchoolLesson]] = [:]
     @Published private(set) var periods: [String: [LessonPeriod]] = [:]
-    @Published private(set) var changes: [String: SubstitutionDay] = SubstitutionCache.read()
+    @Published private(set) var changes: [String: SubstitutionDay]
     @Published private(set) var changesFailed = false
     var pickedWeekID: String?
     private var lastPrepare: (group: String, shortened: Set<String>)?
+    private var running: Task<Void, Never>?
 
-    /// Changes are published per day; load the visible week's school days from today on.
+    init() {
+        if SampleData.isUITesting {
+            let sample = SampleData.schedule()
+            schedule = sample
+            weeks = [sample.week]
+            changes = SampleData.changes(for: sample)
+        } else {
+            schedule = ScheduleCache.read()
+            weeks = OfflineStore.readWeeks()
+            changes = SubstitutionCache.read()
+        }
+    }
+
+    /// Changes are published per day; load all five days of the visible week.
     func loadChanges(for week: PublishedWeek) async {
         let loaded = await EduPageClient().substitutions(for: week)
         changes.merge(loaded) { $1 }
@@ -45,7 +61,6 @@ final class ScheduleModel: ObservableObject {
             for part in parts.map({ $0.applying(dayChanges) }) {
                 cards.append(part)
                 slots[part.id] = part.periodTimes(on: date, shortened: shortened)
-
             }
         }
         currentGroup = selected
@@ -53,12 +68,12 @@ final class ScheduleModel: ObservableObject {
         days = Dictionary(grouping: cards.sorted { ($0.day, $0.period, $0.id) < ($1.day, $1.period, $1.id) }, by: \.day)
         periods = slots
     }
-    private var running: Task<Void, Never>?
 
     /// SwiftUI cancels `.refreshable`/`.task` work when the view redraws or the app goes to the
     /// background, which made URLSession fail with "cancelled". The load runs in its own task,
     /// so callers can stop waiting without stopping the download.
     func refresh(week: PublishedWeek? = nil) async {
+        guard !SampleData.isUITesting else { return }
         if let running = running {
             await running.value
             if week == nil { return }
@@ -76,15 +91,18 @@ final class ScheduleModel: ObservableObject {
             let client = EduPageClient()
             let available = try await client.weeks()
             weeks = available
+            OfflineStore.saveWeeks(available)
             let current = WidgetSelection.week(from: available, on: WidgetSelection.schoolDay(Date()))
             guard let selected = week ?? available.first(where: { $0.id == pickedWeekID }) ?? current else { return }
             let loaded = try await client.schedule(week: selected)
             schedule = loaded
+            offlineSince = nil
             if week != nil { pickedWeekID = selected.id }
-            // Offline data stays the current week, even after browsing another one.
+            OfflineStore.save(loaded)
+            // The widget's copy stays the current week, even after browsing another one.
             if selected.id == current?.id {
                 do { try ScheduleCache.save(loaded) }
-                catch { self.error = "Dati ielādēti, bet tos neizdevās saglabāt bezsaistē." }
+                catch { self.error = "Dati ielādēti, bet tos neizdevās saglabāt bezsaistei." }
             }
             WidgetCenter.shared.reloadAllTimelines()
             await loadChanges(for: selected)
@@ -95,6 +113,23 @@ final class ScheduleModel: ObservableObject {
         } catch let error as URLError where error.code == .cancelled {
             _ = error
         } catch {
+            useSavedData(for: week, after: error)
+        }
+    }
+
+    /// Weak or no internet: keep working with what was saved, and only show an error
+    /// when there is nothing to show at all.
+    private func useSavedData(for week: PublishedWeek?, after error: Error) {
+        if let week = week, let saved = OfflineStore.schedule(weekID: week.id) {
+            schedule = saved
+            pickedWeekID = week.id
+        }
+        if schedule != nil {
+            offlineSince = schedule?.fetchedAt
+            if week != nil, OfflineStore.schedule(weekID: week!.id) == nil {
+                self.error = "Šī nedēļa nav saglabāta bezsaistei. \(ScheduleModel.explain(error))"
+            }
+        } else {
             self.error = ScheduleModel.explain(error)
         }
     }
@@ -107,7 +142,7 @@ final class ScheduleModel: ObservableObject {
         }
         switch url.code {
         case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
-            return "Nav interneta savienojuma. Rādīti saglabātie dati; pievienojies internetam un atjauno."
+            return "Nav interneta savienojuma. Pievienojies internetam un atjauno sarakstu."
         case .timedOut:
             return "EduPage pārāk ilgi neatbild. Mēģini vēlreiz pēc brīža."
         case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
@@ -128,12 +163,17 @@ struct ContentView: View {
     @AppStorage(ChangeNotifier.newWeekKey) private var notifyNewWeek = false
     @AppStorage("showWholeWeek") private var wholeWeek = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .title3) private var timeColumn: CGFloat = 56
+    @ScaledMetric(relativeTo: .caption) private var periodColumn: CGFloat = 34
+    @ScaledMetric(relativeTo: .caption) private var startColumn: CGFloat = 42
     @State private var day = SchoolDate.day(WidgetSelection.schoolDay(Date()))
     @State private var openedOn = SchoolDate.dateKey(Date())
     @State private var showGroups = false
     @State private var showSettings = false
     @State private var search = ""
-    private let blue = Color(red: 0, green: 0.44, blue: 0.9)
+    private let blue = Theme.blue
+    private let orange = Theme.orange
     private var surface: Color { Color(.secondarySystemGroupedBackground) }
     private var selected: SchoolGroup? { model.currentGroup }
     private var shortenedSet: Set<String> { Set(shortenedDates.split(separator: ",").map(String.init)) }
@@ -144,9 +184,7 @@ struct ContentView: View {
     }
     private var isShortened: Bool { shortenedSet.contains(BellTimes.dateKey(selectedDate)) }
     private var lessons: [SchoolLesson] { model.days[day] ?? [] }
-    private var fullDate: String {
-        SchoolDate.full(selectedDate)
-    }
+    private var fullDate: String { SchoolDate.full(selectedDate) }
     private var dayTitle: String { SchoolDate.dayNames[day] }
     private var appVersion: String {
         let info = Bundle.main.infoDictionary
@@ -154,7 +192,6 @@ struct ContentView: View {
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(version) (build \(build))"
     }
-    private let orange = Color(red: 0.95, green: 0.5, blue: 0.1)
     private func date(ofDay index: Int) -> Date {
         SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
     }
@@ -174,14 +211,20 @@ struct ContentView: View {
         guard (0..<5).contains(target) else { return }
         withAnimation(.easeInOut(duration: 0.2)) { day = target }
     }
+    private func periodLabel(_ first: Int, _ last: Int) -> String {
+        first == last ? "\(first). stunda" : "\(first).–\(last). stunda"
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if let since = model.offlineSince {
+                        offlineBanner(since)
+                    }
                     if let error = model.error {
                         Label(error, systemImage: "wifi.exclamationmark")
-                            .font(.footnote).foregroundStyle(.orange).padding(16)
+                            .font(.footnote).foregroundStyle(orange).padding(16)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(surface, in: RoundedRectangle(cornerRadius: 20))
                     }
@@ -202,23 +245,23 @@ struct ContentView: View {
                                 }
                             }
                         } else {
-                        dayPicker
-                        if !looseChanges.isEmpty { changesCard }
-                        if selected == nil {
-                            ContentUnavailableView("Izvēlies grupu", systemImage: "person.2", description: Text("Šajā nedēļā saglabātā grupa nav atrasta."))
-                        } else if lessons.isEmpty {
-                            ContentUnavailableView("Brīva diena.", systemImage: "sun.max", description: Text("Šajā sarakstā šai dienai nav stundu."))
-                        } else {
-                            daySummary
-                            TimelineView(.periodic(from: .now, by: 30)) { context in
-                                LazyVStack(spacing: 8) {
-                                    nowBanner(now: context.date)
-                                    ForEach(lessons) { lesson in
-                                        lessonCard(lesson, now: context.date)
+                            dayPicker
+                            if !looseChanges.isEmpty { changesCard }
+                            if selected == nil {
+                                ContentUnavailableView("Izvēlies grupu", systemImage: "person.2", description: Text("Šajā nedēļā saglabātā grupa nav atrasta."))
+                            } else if lessons.isEmpty {
+                                ContentUnavailableView("Brīva diena.", systemImage: "sun.max", description: Text("Šajā sarakstā šai dienai nav stundu."))
+                            } else {
+                                daySummary
+                                TimelineView(.periodic(from: .now, by: 30)) { context in
+                                    LazyVStack(spacing: 8) {
+                                        nowBanner(now: context.date)
+                                        ForEach(lessons) { lesson in
+                                            lessonCard(lesson, now: context.date)
+                                        }
                                     }
                                 }
                             }
-                        }
                         }
                         footer(schedule)
                     } else {
@@ -248,14 +291,16 @@ struct ContentView: View {
                             Text(selected?.short ?? "\(group). grupa").font(.subheadline.weight(.semibold))
                             Image(systemName: "chevron.down").font(.caption2.weight(.bold))
                         }
-                    }.disabled(model.schedule == nil).accessibilityLabel("Mainīt grupu")
+                    }.disabled(model.schedule == nil)
+                        .accessibilityLabel("Grupa: \(selected?.short ?? group)")
+                        .accessibilityHint("Mainīt grupu")
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { Task { await model.refresh() } } label: {
                         if model.busy { ProgressView() } else { Image(systemName: "arrow.clockwise") }
-                    }.disabled(model.busy).accessibilityLabel("Atjaunot sarakstu")
+                    }.disabled(model.busy).accessibilityLabel(model.busy ? "Ielādē sarakstu" : "Atjaunot sarakstu")
                     Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
-                        .accessibilityLabel("Dienas iestatījumi")
+                        .accessibilityLabel("Iestatījumi")
                 }
             }
             .refreshable { await model.refresh() }
@@ -271,6 +316,7 @@ struct ContentView: View {
                 Task { await model.refresh() }
             }
             .onChange(of: model.schedule?.fetchedAt, initial: true) { _, _ in prepareDays() }
+            .onChange(of: model.schedule?.week.id) { _, _ in prepareDays() }
             .onChange(of: group) { _, _ in prepareDays() }
             .onChange(of: shortenedDates) { _, _ in prepareDays() }
             .sheet(isPresented: $showGroups) { groupPicker }
@@ -280,76 +326,163 @@ struct ContentView: View {
 
     private func prepareDays() { model.prepare(group: group, shortenedDates: shortenedSet) }
 
-    private func weekPicker(_ schedule: SchoolSchedule) -> some View {
-        HStack(alignment: .center, spacing: 8) {
+    private func offlineBanner(_ since: Date) -> some View {
+        let when = SchoolDate.calendar.isDateInToday(since)
+            ? "šodien plkst. \(SchoolDate.time(since))"
+            : "\(SchoolDate.short(since)) plkst. \(SchoolDate.time(since))"
+        return Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text(wholeWeek ? "Visa nedēļa" : dayTitle).font(.title2.weight(.bold)).tracking(-0.5)
-                HStack(spacing: 6) {
-                    if wholeWeek {
-                        let total = (0..<5).reduce(0) { $0 + changes(ofDay: $1).count }
-                        Text(total == 0 ? "Bez izmaiņām" : "\(total) \(total == 1 ? "izmaiņa" : "izmaiņas")")
-                            .foregroundStyle(total == 0 ? Color.secondary : orange)
-                    } else {
-                        Text(fullDate).foregroundStyle(.secondary)
-                        if isToday { Text("· Šodien").foregroundStyle(blue) }
-                    }
-                }.font(.subheadline.weight(.medium))
+                Text("Bezsaistē").font(.subheadline.weight(.semibold))
+                Text("Rādīti saglabātie dati no \(when). Pavelc uz leju, lai mēģinātu vēlreiz.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
-            Spacer(minLength: 4)
-            Menu {
-                ForEach(model.weeks) { week in
-                    Button(week.title) { Task { await model.refresh(week: week) } }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text("\(SchoolDate.short(schedule.week.from))–\(SchoolDate.short(schedule.week.until.addingTimeInterval(-1)))")
-                    Image(systemName: "chevron.down").font(.caption2)
-                }.font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(surface, in: Capsule())
-            }.disabled(model.busy || model.weeks.isEmpty)
-                .accessibilityLabel("Izvēlēties nedēļu")
+        } icon: {
+            Image(systemName: "wifi.slash").foregroundStyle(orange)
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func weekPicker(_ schedule: SchoolSchedule) -> some View {
+        let range = "\(SchoolDate.short(schedule.week.from))–\(SchoolDate.short(schedule.week.until.addingTimeInterval(-1)))"
+        let saved = OfflineStore.savedWeekIDs()
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 8) {
+                weekTitle
+                Spacer(minLength: 4)
+                weekMenu(range, saved: saved)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                weekTitle
+                weekMenu(range, saved: saved)
+            }
         }
     }
 
-    private var dayPicker: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<5) { index in
-                let date = SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
-                Button { withAnimation(.easeInOut(duration: 0.18)) { day = index } } label: {
-                    let today = SchoolDate.calendar.isDateInToday(date)
-                    VStack(spacing: 4) {
-                        Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index]).font(.caption.weight(.medium))
-                            .opacity(day == index ? 0.8 : 0.6)
-                        Text("\(SchoolDate.calendar.component(.day, from: date))").font(.title3.weight(.semibold))
-                            .foregroundStyle(day != index && today ? blue : (day == index ? Color.white : Color.primary))
-                        Circle().fill(changes(ofDay: index).isEmpty ? Color.clear : orange).frame(width: 5, height: 5)
+    private var weekTitle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(wholeWeek ? "Visa nedēļa" : dayTitle).font(.title2.weight(.bold))
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 6) {
+                if wholeWeek {
+                    let total = (0..<5).reduce(0) { $0 + changes(ofDay: $1).count }
+                    Text(total == 0 ? "Bez izmaiņām" : "\(total) \(total == 1 ? "izmaiņa" : "izmaiņas")")
+                        .foregroundStyle(total == 0 ? Color.secondary : orange)
+                } else {
+                    Text(fullDate).foregroundStyle(.secondary)
+                    if isToday { Text("· Šodien").foregroundStyle(blue) }
+                }
+            }.font(.subheadline.weight(.medium))
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func weekMenu(_ range: String, saved: Set<String>) -> some View {
+        Menu {
+            ForEach(model.weeks) { week in
+                Button { Task { await model.refresh(week: week) } } label: {
+                    if model.offlineSince != nil && !saved.contains(week.id) {
+                        Text("\(week.title) (nav saglabāta)")
+                    } else {
+                        Text(week.title)
                     }
-                    .frame(maxWidth: .infinity).padding(.top, 10).padding(.bottom, 6)
-                    .background(day == index ? blue : surface, in: RoundedRectangle(cornerRadius: 16))
-                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(today && day != index ? blue.opacity(0.4) : .clear, lineWidth: 1))
-                    .foregroundStyle(day == index ? Color.white : Color.primary)
-                }.buttonStyle(.plain).accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.short(date))\(changes(ofDay: index).isEmpty ? "" : ", ir izmaiņas")")
-                    .accessibilityAddTraits(day == index ? .isSelected : [])
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(range)
+                Image(systemName: "chevron.down").font(.caption2)
+            }.font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 10)
+                .background(surface, in: Capsule())
+                .contentShape(Capsule())
+        }.disabled(model.busy || model.weeks.isEmpty)
+            .accessibilityLabel("Nedēļa \(range)")
+            .accessibilityHint("Izvēlēties citu nedēļu")
+    }
+
+    private var dayPicker: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                // Very large text: the five days scroll sideways instead of shrinking the text.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(0..<5, id: \.self) { index in dayButton(index).frame(minWidth: 96) }
+                    }
+                }
+            } else {
+                HStack(spacing: 6) {
+                    ForEach(0..<5, id: \.self) { index in dayButton(index) }
+                }
             }
         }
+    }
+
+    private func dayButton(_ index: Int) -> some View {
+        let date = SchoolDate.calendar.date(byAdding: .day, value: index, to: SchoolDate.monday(selectedDate))!
+        let today = SchoolDate.calendar.isDateInToday(date)
+        let hasChanges = !changes(ofDay: index).isEmpty
+        return Button { withAnimation(.easeInOut(duration: 0.18)) { day = index } } label: {
+            VStack(spacing: 4) {
+                Text(["Pr", "Ot", "Tr", "Ce", "Pk"][index]).font(.caption.weight(.medium))
+                Text("\(SchoolDate.calendar.component(.day, from: date))").font(.title3.weight(.semibold))
+                    .foregroundStyle(day != index && today ? blue : (day == index ? Color.white : Color.primary))
+                Circle().fill(hasChanges ? (day == index ? Color.white : orange) : Color.clear)
+                    .frame(width: 6, height: 6)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44).padding(.top, 10).padding(.bottom, 6)
+            .background(day == index ? Theme.blueFill : surface, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(today && day != index ? blue.opacity(0.6) : .clear, lineWidth: 1.5))
+            .foregroundStyle(day == index ? Color.white : Color.primary)
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+        }.buttonStyle(.plain)
+            .accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.full(date))\(today ? ", šodien" : "")\(hasChanges ? ", ir izmaiņas" : "")")
+            .accessibilityAddTraits(day == index ? .isSelected : [])
     }
 
     private var daySummary: some View {
         let real = lessons.filter { !$0.isLunch }
         let changed = real.filter { $0.change != nil }.count
+        let end = lessons.compactMap(\.end).max()
         return HStack(spacing: 8) {
             Text("\(real.count) \(real.count == 1 ? "stunda" : "stundas")").font(.subheadline.weight(.semibold))
             if changed > 0 {
-                Text("\(changed) \(changed == 1 ? "mainīta" : "mainītas")")
+                Label("\(changed) \(changed == 1 ? "mainīta" : "mainītas")", systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption.weight(.semibold)).foregroundStyle(orange)
                     .padding(.horizontal, 7).padding(.vertical, 2).background(orange.opacity(0.14), in: Capsule())
             }
-            if isShortened { Text("Saīsinātā diena").font(.caption2).foregroundStyle(blue) }
-            Spacer()
-            if let end = lessons.compactMap(\.end).max() {
+            if isShortened { Text("Saīsinātā diena").font(.caption).foregroundStyle(blue) }
+            Spacer(minLength: 0)
+            if let end = end {
                 Text("Līdz \(SchoolDate.time(end))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
             }
         }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func lessonDescription(_ lesson: SchoolLesson, periodText: String, active: Bool) -> String {
+        var parts = [periodLabel(lesson.period, lesson.period + lesson.durationPeriods - 1)]
+        if let start = lesson.start, let end = lesson.end {
+            parts.append("no \(SchoolDate.time(start)) līdz \(SchoolDate.time(end))")
+        }
+        if active { parts.append("notiek tagad") }
+        parts.append(lesson.subject)
+        if let change = lesson.change {
+            if change.cancelled { parts.append("stunda nenotiek") }
+            if let old = change.previousSubject { parts.append("mainīta, bija \(old)") }
+        }
+        if !lesson.teacher.isEmpty {
+            parts.append("skolotājs \(lesson.teacher)" + (lesson.change?.previousTeacher.map { ", bija \($0)" } ?? ""))
+        }
+        if !lesson.room.isEmpty {
+            parts.append("kabinets \(lesson.room)" + (lesson.change?.previousRoom.map { ", bija \($0)" } ?? ""))
+        }
+        if !lesson.subgroup.isEmpty { parts.append(lesson.subgroup) }
+        if let change = lesson.change, !change.cancelled, change.previousSubject == nil,
+           change.previousTeacher == nil, change.previousRoom == nil {
+            parts.append("izmaiņa: \(change.text)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func lessonCard(_ lesson: SchoolLesson, now: Date) -> some View {
@@ -362,29 +495,42 @@ struct ContentView: View {
         let changed = lesson.change
         let cancelled = changed?.cancelled == true
         let accent = changed != nil ? orange : SubjectColor.color(for: lesson.subject)
-        return HStack(alignment: .top, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(lesson.start.map(SchoolDate.time) ?? "—")
-                    .font(.system(size: 18, weight: .semibold)).monospacedDigit()
-                Text(lesson.end.map(SchoolDate.time) ?? "—")
-                    .font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                if active { Circle().fill(blue).frame(width: 6, height: 6).padding(.top, 8) }
-            }.frame(width: 56, alignment: .leading)
-            VStack(alignment: .leading, spacing: 9) {
+        let dim = cancelled || (lesson.end.map { $0 < now } == true && isToday)
+        let blue = dim ? Theme.dimmed : self.blue
+        let orange = dim ? Theme.dimmed : self.orange
+        let stacked = typeSize.isAccessibilitySize
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                             : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+        return layout {
+            Group {
+                if stacked {
+                    Text("\(lesson.start.map(SchoolDate.time) ?? "—")–\(lesson.end.map(SchoolDate.time) ?? "—")")
+                        .font(.title3.weight(.semibold)).monospacedDigit()
+                } else {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(lesson.start.map(SchoolDate.time) ?? "—")
+                            .font(.title3.weight(.semibold)).monospacedDigit()
+                        Text(lesson.end.map(SchoolDate.time) ?? "—")
+                            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        if active { Circle().fill(blue).frame(width: 6, height: 6).padding(.top, 8) }
+                    }.frame(width: timeColumn, alignment: .leading)
+                }
+            }.foregroundStyle(dim ? Theme.dimmed : Color.primary)
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Text(active ? "TAGAD · \(periodText). STUNDA" : (inBreak ? "STARPBRĪDIS" : "\(periodText). STUNDA"))
-                        .font(.system(size: 9, weight: .semibold)).tracking(1.2)
+                        .font(.caption2.weight(.semibold)).tracking(1)
                         .foregroundStyle(active ? blue : Color.secondary)
                     if let changed = changed {
                         Text(changed.cancelled ? "NENOTIEK" : "IZMAIŅA")
-                            .font(.system(size: 9, weight: .bold)).tracking(1)
+                            .font(.caption2.weight(.bold)).tracking(0.8)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(orange.opacity(0.16), in: Capsule()).foregroundStyle(orange)
                     }
                 }
-                Text(lesson.subject).font(.system(size: 18, weight: .semibold)).tracking(-0.3)
+                Text(lesson.subject).font(.title3.weight(.semibold))
                     .strikethrough(cancelled)
-                    .foregroundStyle(cancelled ? Color.secondary : Color.primary)
+                    .foregroundStyle(dim ? Theme.dimmed : Color.primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let old = changed?.previousSubject {
                     Text("Bija: \(old)").font(.caption).strikethrough().foregroundStyle(.secondary)
@@ -392,7 +538,7 @@ struct ContentView: View {
                 if !lesson.teacher.isEmpty {
                     HStack(spacing: 4) {
                         Text(lesson.teacher).foregroundStyle(changed?.previousTeacher != nil ? orange : Color.secondary)
-                        if let old = changed?.previousTeacher { Text(old).strikethrough().foregroundStyle(.tertiary) }
+                        if let old = changed?.previousTeacher { Text(old).strikethrough().foregroundStyle(.secondary) }
                     }.font(.caption)
                 }
                 HStack(spacing: 8) {
@@ -403,7 +549,7 @@ struct ContentView: View {
                             .padding(.horizontal, 8).padding(.vertical, 3)
                             .background((moved ? orange : blue).opacity(0.1), in: Capsule())
                         if let old = changed?.previousRoom {
-                            Text(old).font(.caption).strikethrough().foregroundStyle(.tertiary)
+                            Text(old).font(.caption).strikethrough().foregroundStyle(.secondary)
                         }
                     }
                     if !lesson.subgroup.isEmpty {
@@ -416,17 +562,20 @@ struct ContentView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if lesson.start == nil || lesson.end == nil {
-                    Text("Precizē laiku skolas sarakstā.").font(.caption).foregroundStyle(.orange)
+                    Text("Precizē laiku skolas sarakstā.").font(.caption).foregroundStyle(orange)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 14).padding(.leading, 20).padding(.trailing, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 2).fill(accent).frame(width: 4).padding(.vertical, 14).padding(.leading, 8)
+                .opacity(dim ? 0.4 : 1)
         }
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(active ? blue.opacity(0.5) : Color.clear, lineWidth: 1))
-        .opacity(cancelled || (lesson.end.map { $0 < now } == true && isToday) ? 0.55 : 1)
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(active ? blue.opacity(0.6) : Color.clear, lineWidth: 1.5))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(lessonDescription(lesson, periodText: periodText, active: active))
     }
 
     /// Consecutive periods of the same lesson shown as one row ("1.–2.").
@@ -451,6 +600,20 @@ struct ContentView: View {
         return rows
     }
 
+    private func weekRowDescription(_ row: WeekRow, current: Bool) -> String {
+        let lesson = row.lesson
+        var parts = [periodLabel(row.first, row.last)]
+        if let start = row.start { parts.append("plkst. \(SchoolDate.time(start))") }
+        if current { parts.append("notiek tagad") }
+        parts.append(lesson.subject)
+        if lesson.change?.cancelled == true { parts.append("nenotiek") }
+        else {
+            if lesson.change != nil { parts.append("mainīta") }
+            if !lesson.room.isEmpty { parts.append("kabinets \(lesson.room)") }
+        }
+        return parts.joined(separator: ", ")
+    }
+
     private func weekDayCard(_ index: Int, now: Date) -> some View {
         let date = date(ofDay: index)
         let today = SchoolDate.calendar.isDate(date, inSameDayAs: now)
@@ -463,18 +626,24 @@ struct ContentView: View {
                 HStack(spacing: 6) {
                     Text(SchoolDate.dayNames[index]).font(.headline).foregroundStyle(today ? blue : Color.primary)
                     Text(SchoolDate.short(date)).font(.subheadline).foregroundStyle(.secondary)
-                    if today { Text("Šodien").font(.caption2.weight(.semibold)).foregroundStyle(blue) }
+                    if today { Text("Šodien").font(.caption.weight(.semibold)).foregroundStyle(blue) }
                     if changeCount > 0 {
-                        Text("\(changeCount) izm.").font(.caption2.weight(.semibold)).foregroundStyle(orange)
+                        Label("\(changeCount)", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption.weight(.semibold)).foregroundStyle(orange)
                             .padding(.horizontal, 6).padding(.vertical, 2).background(orange.opacity(0.14), in: Capsule())
                     }
-                    Spacer()
+                    Spacer(minLength: 0)
                     if let end = rows.compactMap(\.end).max() {
                         Text("līdz \(SchoolDate.time(end))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }
-                    Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 }
-            }.buttonStyle(.plain).accessibilityHint("Atvērt dienas skatu")
+                .frame(minHeight: 44).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(SchoolDate.dayNames[index]), \(SchoolDate.full(date))\(today ? ", šodien" : "")\(changeCount > 0 ? ", \(changeCount) izmaiņas" : "")")
+                .accessibilityHint("Atvērt dienas skatu")
+                .accessibilityAddTraits(.isHeader)
             if rows.isEmpty {
                 Text("Nav stundu").font(.caption).foregroundStyle(.secondary)
             } else {
@@ -483,48 +652,57 @@ struct ContentView: View {
                     let cancelled = lesson.change?.cancelled == true
                     let current = today && (row.start.map { $0 <= now } ?? false) && (row.end.map { $0 > now } ?? false)
                     let past = today && (row.end.map { $0 <= now } ?? false)
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    let orange = past || cancelled ? Theme.dimmed : self.orange
+                    let rowLayout = typeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                        : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+                    rowLayout {
                         Text(row.first == row.last ? "\(row.first)." : "\(row.first).–\(row.last).")
-                            .font(.caption2.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
-                            .frame(width: 34, alignment: .leading)
+                            .font(.caption.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
+                            .frame(width: typeSize.isAccessibilitySize ? nil : periodColumn, alignment: .leading)
                         Text(row.start.map(SchoolDate.time) ?? "—")
                             .font(.caption.weight(.medium)).monospacedDigit()
                             .foregroundStyle(current ? blue : Color.secondary)
-                            .frame(width: 40, alignment: .leading)
+                            .frame(width: typeSize.isAccessibilitySize ? nil : startColumn, alignment: .leading)
+                        if lesson.change != nil {
+                            Image(systemName: "arrow.triangle.2.circlepath").font(.caption2).foregroundStyle(orange)
+                        }
                         Text(SubjectDisplay.name(lesson.subject)).font(.subheadline.weight(current ? .semibold : .regular))
                             .strikethrough(cancelled)
-                            .foregroundStyle(lesson.change != nil ? orange : (current ? blue : Color.primary))
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
+                            .foregroundStyle(lesson.change != nil ? orange : (current ? blue : (past ? Theme.dimmed : Color.primary)))
+                            .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                        if !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
                         Text(cancelled ? "nenotiek" : lesson.room).font(.caption)
                             .foregroundStyle(lesson.change != nil ? orange : Color.secondary).lineLimit(1)
                     }
-                    .opacity(past || cancelled ? 0.5 : 1)
-                    .accessibilityElement(children: .combine)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(weekRowDescription(row, current: current))
                 }
             }
         }
         .padding(14)
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(today ? blue.opacity(0.45) : Color.clear, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(today ? blue.opacity(0.6) : Color.clear, lineWidth: 1.5))
     }
 
     private var changesCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Citas izmaiņas", systemImage: "arrow.triangle.2.circlepath")
                 .font(.subheadline.weight(.semibold)).foregroundStyle(orange)
+                .accessibilityAddTraits(.isHeader)
             ForEach(looseChanges) { entry in
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(entry.periodText).font(.caption.weight(.bold)).monospacedDigit()
-                        .frame(width: 44, alignment: .leading)
+                        .frame(minWidth: 44, alignment: .leading)
                     Text(entry.text).font(.caption).fixedSize(horizontal: false, vertical: true)
-
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(entry.firstPeriod == nil ? entry.text : "\(entry.periodText) stunda: \(entry.text)")
             }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
         .background(orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(orange.opacity(0.35), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(orange.opacity(0.4), lineWidth: 1))
     }
 
     /// "Now" or "next" summary for today, with progress through the current lesson.
@@ -540,22 +718,26 @@ struct ContentView: View {
                         Spacer()
                         Text("vēl \(left) min").font(.caption.weight(.medium)).monospacedDigit().foregroundStyle(.secondary)
                     }
-                    Text(current.subject).font(.headline).lineLimit(1)
+                    Text(current.subject).font(.headline).lineLimit(2)
                     ProgressView(value: min(1, max(0, now.timeIntervalSince(current.start!) / total))).tint(blue)
                 }
                 .padding(14).background(blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Tagad notiek \(current.subject), beigsies pēc \(left) minūtēm")
             } else if let next = timed.first(where: { $0.start! > now }) {
                 let mins = Int(ceil(next.start!.timeIntervalSince(now) / 60))
+                let when = mins < 60 ? "pēc \(mins) min" : "plkst. \(SchoolDate.time(next.start!))"
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Nākamā").font(.caption.weight(.semibold)).foregroundStyle(blue)
-                        Text(next.subject).font(.headline).lineLimit(1)
+                        Text(next.subject).font(.headline).lineLimit(2)
                     }
                     Spacer()
-                    Text(mins < 60 ? "pēc \(mins) min" : "plkst. \(SchoolDate.time(next.start!))")
-                        .font(.subheadline.weight(.semibold)).monospacedDigit()
+                    Text(when).font(.subheadline.weight(.semibold)).monospacedDigit()
                 }
                 .padding(14).background(blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Nākamā stunda: \(next.subject), \(mins < 60 ? "pēc \(mins) minūtēm" : when)")
             } else if let end = timed.compactMap(\.end).max(), end <= now {
                 Label("Šodienas stundas beigušās", systemImage: "checkmark.circle")
                     .font(.subheadline).foregroundStyle(.secondary)
@@ -568,12 +750,15 @@ struct ContentView: View {
     private func footer(_ schedule: SchoolSchedule) -> some View {
         VStack(spacing: 8) {
             Text("Atjaunots \(SchoolDate.short(schedule.fetchedAt)) plkst. \(SchoolDate.time(schedule.fetchedAt))")
-                .font(.caption2).foregroundStyle(.secondary)
-            if model.changesFailed {
-                Text("Stundu izmaiņas neizdevās ielādēt.").font(.caption2).foregroundStyle(orange)
+                .font(.caption).foregroundStyle(.secondary)
+            if model.changesFailed && model.offlineSince == nil {
+                Text("Daļu stundu izmaiņu neizdevās ielādēt; rādītas saglabātās.").font(.caption).foregroundStyle(orange)
+                    .multilineTextAlignment(.center)
             }
             Link("Skatīt EduPage ↗", destination: URL(string: "https://valteh.edupage.org/timetable/view.php")!)
-                .font(.caption)
+                .font(.footnote).padding(.vertical, 10).padding(.horizontal, 16)
+                .contentShape(Rectangle())
+                .accessibilityLabel("Atvērt EduPage sarakstu pārlūkā")
         }.frame(maxWidth: .infinity).padding(.top, 8)
     }
 
@@ -585,9 +770,10 @@ struct ContentView: View {
                         HStack {
                             Text(item.name).foregroundStyle(.primary)
                             Spacer()
-                            if selected?.id == item.id { Image(systemName: "checkmark.circle.fill") }
+                            if selected?.id == item.id { Image(systemName: "checkmark.circle.fill").accessibilityHidden(true) }
                         }.padding(.vertical, 6)
                     }
+                    .accessibilityAddTraits(selected?.id == item.id ? .isSelected : [])
                 }
             }
             .searchable(text: $search, prompt: "Grupas numurs")
@@ -637,6 +823,11 @@ struct ContentView: View {
                     Text("Turi nospiestu sākuma ekrānu un pievieno “Stundu Saraksts”. Grupu izvēlies logrīka iestatījumos.")
                     Text("Ja izmanto pirmssvētku laikus, arī logrīka iestatījumos norādi datumu formātā GGGG-MM-DD. Aplikācijas izvēle uz logrīku automātiski nepāriet.")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
+                    LabeledContent("Saglabātās nedēļas", value: "\(OfflineStore.savedWeekIDs().count)")
+                } header: { Text("Bezsaiste") } footer: {
+                    Text("Atvērtās nedēļas (līdz \(OfflineStore.keptWeeks)) un pēdējo divu nedēļu izmaiņas tiek saglabātas telefonā, lai saraksts strādātu arī bez interneta.")
                 }
                 Section("Par aplikāciju") {
                     LabeledContent("Versija", value: appVersion)

@@ -206,24 +206,15 @@ extension EduPageClient {
         var result: [String: SubstitutionDay] = [:]
         for offset in 0..<5 {
             guard let date = c.date(byAdding: .day, value: offset, to: SchoolDate.monday(week.from)) else { continue }
-            if let day = try? await substitutions(on: date) { result[day.date] = day }
+            do {
+                let day = try await substitutions(on: date)
+                result[day.date] = day
+            } catch let error as URLError where error.code == .notConnectedToInternet {
+                break  // Offline: the other days would fail too; saved changes stay in use.
+            } catch {
+                continue
+            }
         }
         return result
-    }
-}
-
-enum SubstitutionCache {
-    private static var url: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("substitutions-v1.json")
-    }
-    static func read() -> [String: SubstitutionDay] {
-        guard let bytes = try? Data(contentsOf: url) else { return [:] }
-        return (try? JSONDecoder().decode([String: SubstitutionDay].self, from: bytes)) ?? [:]
-    }
-    static func save(_ days: [String: SubstitutionDay]) {
-        let cutoff = SchoolDate.dateKey(Date().addingTimeInterval(-7 * 86400))
-        let merged = read().merging(days) { $1 }.filter { $0.key >= cutoff }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? JSONEncoder().encode(merged).write(to: url, options: .atomic)
     }
 }

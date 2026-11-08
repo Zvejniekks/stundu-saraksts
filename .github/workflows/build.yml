@@ -21,6 +21,30 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: UI tests (simulator, sample data)
+        run: |
+          set -o pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          ios = sorted((k for k in devices if "iOS" in k), key=lambda k: [int(p) for p in k.split("iOS-")[1].split("-")])
+          print(next(d["udid"] for k in reversed(ios) for d in devices[k] if d["name"].startswith("iPhone")))
+          ')
+          echo "Simulator: $UDID"
+          xcodebuild test \
+            -project StunduSaraksts.xcodeproj \
+            -scheme StunduSaraksts \
+            -destination "id=$UDID" \
+            -derivedDataPath build-tests \
+            -resultBundlePath UITestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | grep -E "Test Case|error:|failed|passed|AUDIT:|\*\* TEST" 
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: UITestResults
+          path: UITestResults.xcresult
+
       - name: Build (unsigned)
         run: |
           xcodebuild -project StunduSaraksts.xcodeproj \
