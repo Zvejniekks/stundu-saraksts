@@ -1,4 +1,21 @@
-# Stundu Saraksts · 1.2
+# Stundu Saraksts · 1.3
+
+## Jaunums 1.3
+
+**Bezsaiste.** Saraksts strādā arī skolā ar vāju vai bez interneta:
+- telefonā tiek saglabātas pēdējās 6 atvērtās nedēļas, nedēļu saraksts un pēdējo divu nedēļu izmaiņas;
+- ja EduPage nav sasniedzams, kļūdas vietā redzams “Bezsaistē · rādīti saglabātie dati no …”, un var pārslēgt arī uz citām saglabātajām nedēļām;
+- vājā tīklā pieprasījums tiek atkārtots vienu reizi, un novecojusi EduPage sesija tiek atjaunota automātiski;
+- bojāts saglabātais fails tiek izdzēsts, nevis aptur aplikāciju.
+
+**Pieejamība.**
+- Visi teksti seko iOS teksta izmēram (Dynamic Type). Pie ļoti liela teksta stundas laiks pārvietojas virs priekšmeta, un nedēļas izvēle pāriet jaunā rindā.
+- VoiceOver katru stundu nolasa vienā teikumā, piemēram, “5. stunda, no 11:50 līdz 12:30, Programmēšana, mainīta, bija Angļu valoda, kabinets V115., bija 213.”.
+- Zilā un oranžā krāsa ir pielāgota, lai teksta kontrasts būtu vismaz 4,5:1 gan gaišajā, gan tumšajā režīmā. Izmaiņas apzīmē arī ikona, ne tikai krāsa.
+- Pogas un saites ir vismaz 44 punktus augstas.
+
+**Testi.** Jauni testi bojātiem un nepilnīgiem EduPage datiem, bezsaistes krātuvei un tīkla atkārtošanai. UI testi palaiž aplikāciju simulatorā ar parauga datiem un veic Apple pieejamības auditu.
+
 
 ## Jaunums 1.2
 

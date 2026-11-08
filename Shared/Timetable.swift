@@ -85,7 +85,13 @@ enum SchoolDate {
 
 enum ScheduleError: LocalizedError {
     case message(String)
-    var errorDescription: String? { if case .message(let s) = self { return s }; return nil }
+    case server(Int)
+    var errorDescription: String? {
+        switch self {
+        case .message(let s): return s
+        case .server(let status): return "EduPage serveris neatbild (kods \(status)). Mēģini vēlreiz."
+        }
+    }
 }
 
 enum TimetableParser {
@@ -197,12 +203,26 @@ final class EduPageClient {
         config.timeoutIntervalForResource = 40
         session = URLSession(configuration: config)
     }
+    /// Errors worth one more try on a weak school network. Being fully offline is not one of them.
+    static func isTransient(_ error: Error) -> Bool {
+        if let error = error as? ScheduleError, case .server(let status) = error { return status >= 500 }
+        guard let url = error as? URLError else { return false }
+        return [.timedOut, .networkConnectionLost, .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost].contains(url.code)
+    }
     private func data(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await session.data(for: request)
-        guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode) else {
-            throw ScheduleError.message("EduPage serveris neatbild. Mēģini vēlreiz.")
+        var attempt = 0
+        while true {
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let response = response as? HTTPURLResponse else { throw ScheduleError.server(0) }
+                guard (200...299).contains(response.statusCode) else { throw ScheduleError.server(response.statusCode) }
+                return data
+            } catch {
+                attempt += 1
+                guard attempt < 2, EduPageClient.isTransient(error), !Task.isCancelled else { throw error }
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+            }
         }
-        return data
     }
     private func bootstrap() async throws {
         guard token.isEmpty else { return }
@@ -225,6 +245,9 @@ final class EduPageClient {
         return root?["r"]
     }
     private func rpc(_ path: String, args: [Any]) async throws -> [String: Any] {
+        if let result = try await rawRPC(path, args: args) as? [String: Any] { return result }
+        // The session token may have expired; fetch a new one once before giving up.
+        token = ""
         guard let result = try await rawRPC(path, args: args) as? [String: Any] else {
             throw ScheduleError.message("EduPage noraidīja datu pieprasījumu. Atsvaidzini sarakstu.")
         }
@@ -237,20 +260,5 @@ final class EduPageClient {
     }
     func schedule(week: PublishedWeek) async throws -> SchoolSchedule {
         try TimetableParser.schedule(await rpc("/timetable/server/regulartt.js?__func=regularttGetData", args: [NSNull(), week.id]), week: week)
-    }
-}
-
-enum ScheduleCache {
-    // Each process has its own cache; no App Groups entitlement needed for sideloading.
-    private static var url: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("schedule-v2.json")
-    }
-    static func read() -> SchoolSchedule? {
-        guard let bytes = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(SchoolSchedule.self, from: bytes)
-    }
-    static func save(_ schedule: SchoolSchedule) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(schedule).write(to: url, options: .atomic)
     }
 }

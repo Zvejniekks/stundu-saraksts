@@ -225,7 +225,9 @@ struct ScheduleWidgetView: View {
                     }.font(.system(size: slots > 4 ? 8 : 9, weight: .medium))
                 }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(lesson.time), \(lesson.subject), \(lesson.room)")
+                    .accessibilityLabel("\(lesson.time), \(lesson.subject)"
+                        + (lesson.change?.cancelled == true ? ", nenotiek" : (lesson.change != nil ? ", mainīta" : ""))
+                        + (lesson.room.isEmpty ? "" : ", kabinets \(lesson.room)"))
             }
             ForEach(0..<max(0, slots - rows.count), id: \.self) { _ in
                 Color.clear.frame(maxHeight: .infinity)

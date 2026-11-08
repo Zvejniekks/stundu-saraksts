@@ -17,8 +17,8 @@ targets:
       path: StunduSaraksts/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "1.2"
-        CFBundleVersion: "13"
+        CFBundleShortVersionString: "1.3"
+        CFBundleVersion: "14"
         UILaunchScreen: {}
         UIBackgroundModes:
           - fetch
@@ -43,8 +43,8 @@ targets:
       path: StunduWidget/Info.plist
       properties:
         CFBundleDisplayName: Stundu Saraksts
-        CFBundleShortVersionString: "1.2"
-        CFBundleVersion: "13"
+        CFBundleShortVersionString: "1.3"
+        CFBundleVersion: "14"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -53,3 +53,25 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
+
+  StunduSarakstsUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources: [UITests]
+    dependencies:
+      - target: StunduSaraksts
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.toms.stundusaraksts.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
+
+schemes:
+  StunduSaraksts:
+    build:
+      targets:
+        StunduSaraksts: all
+    test:
+      targets:
+        - StunduSarakstsUITests
